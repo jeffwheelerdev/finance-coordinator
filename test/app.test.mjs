@@ -49,6 +49,13 @@ test('all administration routes reject missing or incorrect authorization', asyn
   assert.equal(s.client.calls.length, 0); assert.equal(s.store.writes.length, 0);
 });
 
+test('rewritten Vercel destinations retain routing and authorization', async () => {
+  const s = setup();
+  assert.equal((await s.app.fetch(new Request('https://example.test/api/index?route=health'))).status, 200);
+  assert.equal((await s.app.fetch(new Request('https://example.test/api/index?route=reconcile'))).status, 401);
+  assert.equal(s.client.calls.length, 0); assert.equal(s.store.writes.length, 0);
+});
+
 test('authenticated preflight uses reads and reports that transfer permission was not exercised', async () => {
   const s = setup();
   const response = await s.app.fetch(new Request('https://example.test/api/preflight', { headers: { authorization: `Bearer ${cron}` } }));
