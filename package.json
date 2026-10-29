@@ -14,5 +14,10 @@
   "dependencies": {
     "@vercel/blob": "2.8.2",
     "@vercel/functions": "3.3.4"
+  },
+  "overrides": {
+    "@vercel/blob": {
+      "@vercel/oidc": "3.5.0"
+    }
   }
 }

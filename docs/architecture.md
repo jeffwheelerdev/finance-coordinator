@@ -13,6 +13,18 @@ The observer is read-only, and its PostgreSQL schema is not the current storage
 design. `snapshots/deployment-0.2.1/` remains an incomplete original export.
 Current files with similar names are replacements, not recovered originals.
 
+### Dependency constraint
+
+Blob 2.8.2 supplies the required origin-read and conditional-write APIs. Its
+OIDC helper is scoped to version 3.5.0 in `package.json` to avoid the unused CLI
+configuration dependency that brings vulnerable Zod code into later helper
+versions ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)).
+The store always supplies its explicit read/write token; the SDK selects that
+authentication path before OIDC discovery. Keep this constraint until the
+upstream dependency chain is patched, then validate the full storage preflight
+when updating it. Dependency audit results describe the installed versions,
+not a permanent absence of security issues.
+
 ## Evidence before funding
 
 A candidate must contain a positive `COMPLETE` transfer with the exact
