@@ -1,6 +1,7 @@
 # Configuration
 
-Use private deployment environment variables for all real mappings and policy.
+Use private deployment environment variables for real mappings and execution
+settings. Bills obligations and monitoring metadata live in private Global Config.
 The repository's [example file](../.env.example) contains synthetic UUIDs and
 illustrative amounts. Production credentials must be scoped to Production;
 previews should remain unconfigured or use completely isolated credentials and
@@ -15,7 +16,7 @@ storage.
 | `AUTOMATION_START_AT` | Timezone-qualified ISO timestamp. Optional in observation; required for live mode. Choose a deliberate future UTC cutoff for initial activation, then retain it permanently. |
 | `GENERAL_SPENDING_MONTHLY_BUDGET` | Required nonnegative dollar string, with at most two decimals. No built-in budget default. |
 | `GENERAL_SPENDING_RESERVE_MONTHS` | Required positive integer. Multiplies the monthly budget to obtain the balance target. |
-| `BILLS_BUFFER_TARGET` | Required nonnegative dollar string. Any shortfall in Bills is protected in Income. |
+| `GLOBAL_CONFIG` | Private Global Config connection string with read access to `bills_catalog` and `bills_monitor`. Required for current Bills policy; never put it in a URL shared with a user or in source control. |
 | `INCOME_RESERVE` | Required nonnegative dollar string. Set an explicit value, including `0` when intended. |
 | `MAX_BALANCE_AGE_HOURS` | Positive number at most `26`; defaults to `26`. Must resolve to whole milliseconds. |
 | `FINANCE_ACCOUNT_IDS_JSON` | JSON object with exactly `income`, `pod`, `general`, and `bills`; four distinct provider UUIDs. |
@@ -33,6 +34,48 @@ Money is parsed into exact integer cents. Signs, exponents, whitespace,
 non-numeric values, and more than two decimal places are rejected. Amounts,
 products, and reserve calculations must fit JavaScript's safe integer range.
 Zero is permitted for a budget or reserve; reserve months must remain positive.
+
+## Dynamic Bills target
+
+Version 0.4.0 always includes Bills at priority zero. It calculates the Bills
+target from the private catalog on each invocation; no environment amount sets
+that target. The old `BILLS_BUFFER_TARGET` variable is obsolete and ignored,
+including on deployments where its old value still exists. Remove it when
+updating deployment settings to avoid confusion.
+
+Global Config must supply these two items together:
+
+| Item | Role |
+| --- | --- |
+| `bills_catalog` | Validated obligations, stable bill IDs, positive cent amounts, recurrence, dated evidence and confirmed cancellation details. |
+| `bills_monitor` | A successful `chatgpt_finances` review with a matching catalog revision and a check time no older than seven days. |
+
+The application uses an origin-consistent `getAll` read with caching and stale
+fallback disabled. Missing, malformed, mismatched, unavailable or stale data
+blocks new financial submissions. It does not fall back to a fixed target, an
+old environment value or a cached catalog. A known accepted transfer can still
+be observed by its saved provider ID; that exception cannot submit or retry an
+unknown request.
+
+The forecast uses current catalog rates for all twelve months of the current
+`America/New_York` year, then computes
+`ceil(highestMonthCents / 50000) × 50000`. An exact $500 boundary stays unchanged.
+Annual bills occupy their renewal months; an unknown annual date is placed
+conservatively into the highest month. Confirmed future cancellations remain
+included until their local effective date. Uncertain obligations remain
+included with warnings. An empty or fully excluded catalog requires review
+instead of creating a zero target.
+
+Catalog updates need no redeployment. The runtime carries the catalog revision,
+hash, forecast year and effective local date into policy and ledger metadata.
+It rejects older catalog versions and older projection dates. A cancellation
+may legitimately change the forecast on a later effective date without a
+catalog rewrite. See [Bills monitoring](bills-monitor.md) for the complete
+catalog, monitor and update contract.
+
+The fixed private Blob object `finance-v3/ledger.json` remains separate from
+Global Config. The latter is not an execution lease or a substitute for
+conditional ledger writes.
 
 ## Change a budget
 
@@ -62,7 +105,7 @@ effective budget and configuration hash without revealing account UUIDs.
 ## Additional accounts
 
 `FINANCE_ALLOCATIONS_JSON` is optional and defaults to `[]`. It accepts up to
-nine additional recipients, for ten total including General Spending. This is
+nine additional recipients, for eleven total including Bills and General Spending. This is
 an illustrative entry, not a real account mapping:
 
 ```json
@@ -88,8 +131,12 @@ rejected.
 Use a stable lowercase ID beginning with a letter and containing only letters,
 digits, underscores, or hyphens. IDs and destinations must be unique, including
 disabled entries. A destination cannot be Income, the Pod, Bills, or another
-recipient. Additional priorities are integers of at least one; General
-Spending is permanently priority zero. Equal priorities sort by stable ID.
+recipient. Additional configured priorities are integers of at least one.
+For compatibility with existing configuration, the runtime adds one to each
+additional priority: configured `1` becomes effective priority `2`. Bills is
+permanently priority `0` and General Spending is priority `1`. Equal optional
+priorities sort by stable ID. Optional recipients cannot replace or disable
+the mandatory Bills allocation.
 
 After the first live registration, a stable ID cannot be redirected to a
 different account. New or re-enabled recipients become eligible no earlier
@@ -100,4 +147,7 @@ siblings through a later configuration edit.
 
 An additional account also needs an explicit permitted Income→destination pair
 on the existing Sequence key. Configuration alone does not grant that access.
-All recipients share the Income reserve and Bills protection.
+All recipients share the Income reserve and Bills protection. Funding an
+optional recipient also requires Bills to have completed its priority step for
+that refund; a partial or unfunded Bills deficit skips lower recipients for
+that cycle.

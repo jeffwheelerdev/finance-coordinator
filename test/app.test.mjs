@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createApp } from '../lib/app.mjs';
-import { loadConfig } from '../lib/config.mjs';
+import { loadConfig, withCalculatedBillsTarget } from '../lib/config.mjs';
+import { forecastBills } from '../lib/bills.mjs';
 import { verifiedWebhook, recordWebhook } from '../lib/webhook.mjs';
 import { initialState } from '../lib/engine.mjs';
 import { FakeStore, FakeSequence, ID, TEST_NOW, asISO } from './fixtures.mjs';
@@ -14,12 +15,28 @@ const secret = 'synthetic-webhook-secret-for-offline-tests';
 const cron = 'synthetic-cron-secret-for-offline-tests';
 
 function setup(overrides = {}) {
-  const env = { ...fixtureEnv, SEQUENCE_API_KEY: 'synthetic-provider-key', BLOB_READ_WRITE_TOKEN: 'synthetic-blob-token', CRON_SECRET: cron, SEQUENCE_WEBHOOK_SECRET: secret, ...overrides };
-  const config = loadConfig(env), store = new FakeStore(), clock = { value: TEST_NOW };
+  const env = { ...fixtureEnv, SEQUENCE_API_KEY: 'synthetic-provider-key', BLOB_READ_WRITE_TOKEN: 'synthetic-blob-token', CRON_SECRET: cron, SEQUENCE_WEBHOOK_SECRET: secret,
+    GLOBAL_CONFIG: 'synthetic-private-policy-connection', ...overrides };
+  const policy = policyFixture();
+  const config = withCalculatedBillsTarget(loadConfig(env), forecastBills(policy.bills_catalog, { now: TEST_NOW })), store = new FakeStore(), clock = { value: TEST_NOW, advance(ms) { this.value += ms; } };
   const client = new FakeSequence(config, clock), messages = [], pending = [];
+  let policyReads = 0;
   const app = createApp({ env, now: () => clock.value, clientFactory: () => client, storeFactory: () => store,
+    billsReader: async () => { policyReads += 1; if (policy.failure) throw policy.failure; return structuredClone(policy); },
     background: (promise) => pending.push(promise), log: { error: (message) => messages.push(message) } });
-  return { app, env, config, store, client, clock, messages, pending };
+  return { app, env, config, store, client, clock, messages, pending, policy, policyReads: () => policyReads };
+}
+
+function policyFixture() {
+  const updatedAt = asISO(TEST_NOW - 60_000);
+  return {
+    bills_catalog: { schemaVersion: 1, timeZone: 'America/New_York', updatedAt, bills: [{
+      id: 'synthetic-utility', name: 'Synthetic utility', kind: 'expense', status: 'active',
+      amountCents: 45000, frequency: 'monthly',
+      evidence: { type: 'user_confirmation', reference: 'Offline fixture', observedAt: updatedAt },
+    }] },
+    bills_monitor: { schemaVersion: 1, source: 'chatgpt_finances', status: 'ok', checkedAt: asISO(TEST_NOW), catalogUpdatedAt: updatedAt, reviewCodes: [] },
+  };
 }
 
 function signed({ event = { id: ID(801), type: 'transfer.changed', resource: { type: 'transfer', id: ID(101) }, created_at: asISO(TEST_NOW) },
@@ -42,11 +59,11 @@ test('health is safe without auth and never accesses provider/storage', async ()
 
 test('all administration routes reject missing or incorrect authorization', async () => {
   const s = setup();
-  for (const path of ['status', 'preflight', 'plan', 'reconcile']) {
+  for (const path of ['status', 'preflight', 'plan', 'bills', 'reconcile']) {
     const response = await s.app.fetch(new Request(`https://example.test/api/${path}`, { headers: { authorization: `Bearer ${cron}wrong` } }));
     assert.equal(response.status, 401);
   }
-  assert.equal(s.client.calls.length, 0); assert.equal(s.store.writes.length, 0);
+  assert.equal(s.client.calls.length, 0); assert.equal(s.store.writes.length, 0); assert.equal(s.policyReads(), 0);
 });
 
 test('rewritten Vercel destinations retain routing and authorization', async () => {
@@ -61,7 +78,9 @@ test('authenticated preflight uses reads and reports that transfer permission wa
   const response = await s.app.fetch(new Request('https://example.test/api/preflight', { headers: { authorization: `Bearer ${cron}` } }));
   const body = await response.json();
   assert.equal(response.status, 200); assert.equal(body.transferPermission, 'not_exercised');
-  assert.equal(body.configuration.allocations[0].targetCents, 300000);
+  assert.equal(body.configuration.allocations.find(item => item.id === 'general-spending').targetCents, 300000);
+  assert.equal(body.configuration.allocations[0].id, 'bills');
+  assert.equal(body.configuration.allocations[0].targetCents, 50000);
   assert.equal(s.client.creates.length, 0); assert.equal(s.store.writes.length, 0);
 });
 
@@ -169,4 +188,70 @@ test('reused event ID with different signed metadata is rejected', async () => {
 
 test('large webhook bodies are rejected before persistence', async () => {
   await assert.rejects(verifiedWebhook(signed({ raw: 'x'.repeat(70000) }), secret, TEST_NOW), { code: 'BODY_TOO_LARGE' });
+});
+
+test('bill forecast is private, read-only, and follows changed configuration without redeploying', async () => {
+  const s = setup();
+  const request = () => new Request('https://example.test/api/bills', { headers: { authorization: `Bearer ${cron}` } });
+  let response = await s.app.fetch(request()), body = await response.json();
+  assert.equal(response.status, 200); assert.equal(body.targetCents, 50000); assert.equal(body.months.length, 12);
+  s.policy.bills_catalog.bills[0].amountCents = 50001;
+  s.policy.bills_catalog.updatedAt = asISO(TEST_NOW);
+  s.policy.bills_monitor.catalogUpdatedAt = asISO(TEST_NOW);
+  response = await s.app.fetch(request()); body = await response.json();
+  assert.equal(response.status, 200); assert.equal(body.targetCents, 100000);
+  assert.equal(s.policyReads(), 2); assert.equal(s.client.creates.length, 0); assert.equal(s.store.writes.length, 0);
+  assert.ok(!JSON.stringify(body).includes('Synthetic utility'));
+});
+
+test('stale bill monitoring blocks a new refund allocation before a financial provider call', async () => {
+  const s = setup({ APP_MODE: 'live', LIVE_TRANSFERS_ENABLED: 'true', AUTOMATION_START_AT: asISO(TEST_NOW - 86400000) });
+  s.clock.advance(8 * 86400000);
+  const response = await s.app.fetch(new Request('https://example.test/api/reconcile', { headers: { authorization: `Bearer ${cron}` } }));
+  assert.equal(response.status, 503); assert.equal((await response.json()).code, 'BILLS_MONITOR_STALE');
+  assert.equal(s.client.calls.length, 0); assert.equal(s.store.writes.length, 0);
+});
+
+test('known accepted transfers remain observable during a catalog outage without any new transfer', async () => {
+  const s = setup({ APP_MODE: 'live', LIVE_TRANSFERS_ENABLED: 'true', AUTOMATION_START_AT: asISO(TEST_NOW - 86400000) });
+  const request = () => new Request('https://example.test/api/reconcile', { headers: { authorization: `Bearer ${cron}` } });
+  let response = await s.app.fetch(request()), body = await response.json();
+  assert.equal(body.status, 'pending'); assert.equal(s.client.creates.length, 1);
+  const transferId = [...s.client.accepted.values()][0];
+  s.client.settle(transferId);
+  s.policy.failure = new Error('private-connection-token-must-never-leak');
+  response = await s.app.fetch(request()); body = await response.json();
+  assert.equal(body.code, 'TOPUP_SETTLED'); assert.equal(body.billsPolicyError, 'BILLS_SOURCE_UNAVAILABLE');
+  assert.equal(body.newSubmissionsBlocked, true); assert.equal(s.client.creates.length, 1);
+  assert.ok(!JSON.stringify(body).includes('private-connection'));
+  assert.ok(!JSON.stringify(s.messages).includes('private-connection'));
+  response = await s.app.fetch(request());
+  assert.equal(response.status, 503); assert.equal((await response.json()).code, 'BILLS_SOURCE_UNAVAILABLE');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('an unknown submission outcome is never retried during a bill catalog outage', async () => {
+  const s = setup({ APP_MODE: 'live', LIVE_TRANSFERS_ENABLED: 'true', AUTOMATION_START_AT: asISO(TEST_NOW - 86400000) });
+  s.client.onCreate = () => { throw Object.assign(new Error('Network uncertainty'), { uncertain: true }); };
+  const request = () => new Request('https://example.test/api/reconcile', { headers: { authorization: `Bearer ${cron}` } });
+  let response = await s.app.fetch(request());
+  assert.equal((await response.json()).status, 'uncertain'); assert.equal(s.client.creates.length, 1);
+  s.policy.failure = new Error('Catalog unavailable'); s.clock.advance(61000);
+  response = await s.app.fetch(request());
+  assert.equal(response.status, 503); assert.equal((await response.json()).code, 'BILLS_SOURCE_UNAVAILABLE');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('invalid webhook signatures never read the bill catalog or financial provider', async () => {
+  const s = setup();
+  const response = await s.app.fetch(signed({ key: 'incorrect-offline-key' }));
+  assert.equal(response.status, 401); assert.equal(s.policyReads(), 0); assert.equal(s.client.calls.length, 0);
+});
+
+test('bill routes reject writes and rewritten routes preserve authentication', async () => {
+  const s = setup();
+  const response = await s.app.fetch(new Request('https://example.test/api/bills', { method: 'POST', headers: { authorization: `Bearer ${cron}` } }));
+  assert.equal(response.status, 405);
+  assert.equal((await s.app.fetch(new Request('https://example.test/api/index?route=bills'))).status, 401);
+  assert.equal(s.policyReads(), 0); assert.equal(s.client.calls.length, 0);
 });

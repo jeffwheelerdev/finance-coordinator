@@ -1,7 +1,7 @@
 # Finance Coordinator
 
 A Sequence coordinator for funding spending accounts from Income after a
-verified Pod refund. The current **0.3.0 implementation is newly authored**
+verified Pod refund. The current **0.4.0 implementation is newly authored**
 Node.js code for Vercel. Its source is complete; deployment and financial
 activation require the separate checks in [activation](docs/activation.md).
 Source availability does not establish that a deployment is active.
@@ -12,7 +12,21 @@ does not recover or reconstruct the five missing original source files. See
 
 ## Funding behavior
 
-General Spending has a balance target:
+Bills has first priority. A private catalog projects the current commitments
+into all twelve months of the current `America/New_York` calendar year. The
+highest month determines the Bills balance target, rounded up to a $500 boundary:
+
+```text
+Bills target = ceiling(highest projected monthly bills in cents / 50,000) × 50,000
+```
+
+Annual charges stay in their renewal month rather than being divided by twelve.
+Unknown annual dates are conservatively grouped into the highest month.
+Confirmed cancellations take effect on their recorded local date; uncertain
+obligations remain included. This forecasts the recorded obligations, not a
+guaranteed limit on future spending.
+
+General Spending follows Bills and has its own balance target:
 
 ```text
 target = GENERAL_SPENDING_MONTHLY_BUDGET × GENERAL_SPENDING_RESERVE_MONTHS
@@ -25,16 +39,40 @@ spending target.
 
 An opportunity to fund arises only from an actual, settled Pod→Income refund
 belonging to the configured payout execution. The coordinator verifies the full
-payout, checks upstream funding history, waits for suitable cash evidence, and
-protects the Bills shortfall and explicit Income reserve before filling the
-remaining target gap. General Spending has first priority; additional accounts
-can be configured prospectively.
+payout, checks upstream funding history, and waits for suitable cash evidence.
+It fills Bills from Income first while protecting the explicit Income reserve.
+It does not subtract the Bills deficit twice when funding Bills itself.
+General Spending becomes eligible only after Bills is funded, any Bills
+transfer has settled, and the required balances have refreshed. Additional
+accounts follow General Spending.
 
 Each recipient gets at most one immutable funding intent per refund event.
 A successful partial fill consumes that recipient's opportunity; later polling
 or a budget edit does not refill it from the same event. A cycle without an
 actual refund creates no opportunity. Lowering a target never withdraws money
 from the destination.
+
+If a Bills attempt can fill only part of its deficit, or cannot move an eligible
+amount, lower recipients are skipped for that refund cycle. A later deposit or
+catalog edit does not revive them. A higher Bills target after a completed
+Bills attempt also prevents lower recipients from using money needed by Bills;
+it does not create a second Bills request for the same event.
+
+## Private Bills policy and monitoring
+
+The application reads `bills_catalog` and `bills_monitor` together from private
+Vercel Global Config for each operation. Reads use origin consistency, disable
+fetch caching, and reject stale-on-error fallback. A matching successful
+monitor check no older than seven days is required for new financial work.
+Catalog changes take effect without redeploying application code.
+
+A separate scheduled ChatGPT monitor checks connected Finances evidence and
+maintains that catalog. The Vercel function has no direct Finances connector
+access. See [Bills monitoring](docs/bills-monitor.md) for evidence rules,
+coverage limits, update preparation and scheduling. Global Config contains
+policy; the private Blob ledger remains the sole execution lock and intent
+record. Missing or invalid policy blocks new submissions. An already accepted
+transfer with a known provider ID may still be observed during a policy outage.
 
 The default example is inactive: `APP_MODE=observe` and
 `LIVE_TRANSFERS_ENABLED=false`. Both gates and a deliberate activation cutoff
@@ -45,10 +83,11 @@ providers; there is no live transfer test.
 
 | Document or location | Purpose |
 | --- | --- |
-| [Configuration](docs/configuration.md) | Private variables, arbitrary budgets, and future recipients. |
+| [Configuration](docs/configuration.md) | Private variables, dynamic Bills policy, arbitrary budgets, and future recipients. |
+| [Bills monitoring](docs/bills-monitor.md) | Catalog evidence, automatic updates, freshness, and operational limits. |
 | [Architecture](docs/architecture.md) | Evidence, reserves, durable state, retries, and limits. |
 | [Activation](docs/activation.md) | Inactive setup, read checks, deliberate activation, and operations. |
-| [`lib/`](lib/) and [`api/`](api/) | Current 0.3.0 implementation. |
+| [`lib/`](lib/) and [`api/`](api/) | Current 0.4.0 implementation. |
 | [`test/`](test/) | Offline tests for the current implementation. |
 | [`archive/`](archive/) | Historical Python decision core and read-only observer. |
 | [`snapshots/deployment-0.2.1/`](snapshots/deployment-0.2.1/) | Incomplete original runtime export, with sanitized configuration. |

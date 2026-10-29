@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { reconcile, preview, initialState, validateState, LEASE_MS } from '../lib/engine.mjs';
 import { validTime } from '../lib/evidence.mjs';
 import { SequenceError } from '../lib/sequence.mjs';
+import { withCalculatedBillsTarget } from '../lib/config.mjs';
+import { forecastBills } from '../lib/bills.mjs';
 import { ID, TEST_NOW, asISO, makeConfig, cashAccount, transferRecord, scenario, FakeStore, StoreConflict } from './fixtures.mjs';
 
 const event = (s) => Object.values(s.store.value.events)[0];
@@ -23,6 +25,11 @@ function withBudget(s, monthlyBudgetCents, reserveMonths = 3) {
   s.config = makeConfig({ ...s.config, allocations: s.config.allocations.map((allocation) => allocation.id === 'general-spending'
     ? { ...allocation, monthlyBudgetCents, reserveMonths, targetCents: monthlyBudgetCents * reserveMonths }
     : allocation) });
+}
+
+function withBillsTarget(s, targetCents, changes = {}) {
+  s.config = withCalculatedBillsTarget(s.config, { targetCents, catalogHash: 'b'.repeat(64), year: 2030,
+    catalogUpdatedAt: asISO(s.clock.value), effectiveDate: asISO(s.clock.value).slice(0, 10), ...changes });
 }
 
 test('preview is read-only, computes the target gap and does not claim or complete an event', async () => {
@@ -233,15 +240,277 @@ test('cash account types, capability flags and Pod holds are enforced', async (t
   assert.equal((await s.run()).code, 'POD_NOT_EMPTY'); noWrites(s);
 });
 
-test('bills shortfall and explicit Income reserve reduce the available top-up amount', async () => {
+test('Bills fills its dynamic shortfall first without reserving the same deficit twice', async () => {
   const s = scenario();
   s.client.refreshCash({ income: 100000, general: 0, bills: 15000 });
   const result = await s.run();
   assert.equal(result.code, 'TOPUP_PENDING');
-  assert.equal(s.client.creates[0].request.amountInCents, 55000);
-  assert.equal(child(s).plan.billsShortfallCents, 35000);
-  assert.equal(child(s).plan.protectedIncomeCents, 45000);
-  assert.equal(child(s).plan.gapCents, 300000);
+  assert.equal(s.client.creates[0].request.destinationAccountId, ID(4));
+  assert.equal(s.client.creates[0].request.amountInCents, 35000);
+  const plan = event(s).children.bills.plan;
+  assert.equal(plan.billsShortfallCents, 35000);
+  assert.equal(plan.protectedIncomeCents, 10000);
+  assert.equal(plan.gapCents, 35000);
+  assert.equal(child(s).status, 'WAITING');
+});
+
+test('Bills-first preview and observe plans never submit or consume a refund', async () => {
+  const s = scenario({ mode: 'observe', liveEnabled: false });
+  s.client.refreshCash({ bills: 15000 });
+  const planned = await preview({ config: s.config, client: s.client, store: s.store, now: () => s.clock.value });
+  assert.equal(planned.plan.allocationId, 'bills');
+  assert.equal(planned.plan.amountInCents, 35000);
+  assert.equal(s.store.writes.length, 0);
+  assert.equal((await s.run()).plan.allocationId, 'bills');
+  assert.deepEqual(s.store.value.events, {});
+  assert.equal(s.store.value.billsCatalog, null);
+  noWrites(s);
+});
+
+test('observe and forceObserve leave existing OPEN children unchanged while walking satisfied priorities', async (t) => {
+  for (const forceObserve of [false, true]) {
+    for (const generalBalance of [100000, 300000]) {
+      await t.test(`${forceObserve ? 'forced observe' : 'paused'}; General ${generalBalance}`, async () => {
+        const s = scenario();
+        s.client.accounts.get(ID(1)).balance.balanceLastUpdatedAt = asISO(TEST_NOW - 2 * 3600000);
+        assert.equal((await s.run()).code, 'WAITING_FOR_POST_SETTLEMENT_BALANCE');
+        assert.equal(event(s).children.bills.status, 'WAITING');
+        assert.equal(child(s).status, 'WAITING');
+        const saved = structuredClone(s.store.value);
+        s.client.refreshCash({ bills: 50000, general: generalBalance });
+        if (!forceObserve) s.config = makeConfig({ ...s.config, mode: 'observe', liveEnabled: false });
+        assert.equal((await s.run({ forceObserve })).code, 'READ_ONLY_PLAN');
+        assert.deepEqual(s.store.value.events, saved.events);
+        assert.deepEqual(s.store.value.allocations, saved.allocations);
+        assert.deepEqual(s.store.value.active, saved.active);
+        assert.deepEqual(s.store.value.billsCatalog, saved.billsCatalog);
+        noWrites(s);
+      });
+    }
+  }
+});
+
+test('General Spending waits for Bills settlement and refreshed post-settlement cash evidence', async () => {
+  const s = scenario(); s.client.refreshCash({ bills: 15000 });
+  assert.equal((await s.run()).allocationId, 'bills');
+  assert.equal((await s.run()).code, 'TOPUP_PENDING');
+  assert.equal(s.client.creates.length, 1);
+  await finishFirst(s);
+  assert.equal(event(s).children.bills.status, 'COMPLETE');
+  assert.equal(child(s).status, 'WAITING');
+  assert.equal((await s.run()).code, 'WAITING_FOR_POST_SETTLEMENT_BALANCE');
+  s.clock.advance(1000);
+  Object.assign(s.client.accounts.get(ID(4)).balance, { balanceInCents: 50000,
+    availableBalanceInCents: 50000, balanceLastUpdatedAt: asISO(s.clock.value) });
+  assert.equal((await s.run()).code, 'WAITING_FOR_POST_SETTLEMENT_BALANCE');
+  s.client.refreshCash({ income: 465000, bills: 50000 });
+  assert.equal((await s.run()).allocationId, 'general-spending');
+  assert.equal(s.client.creates.length, 2);
+  assert.equal(s.client.creates[1].request.destinationAccountId, ID(3));
+  assert.equal(s.client.creates[1].request.amountInCents, 200000);
+});
+
+test('a partial Bills fill permanently consumes lower priorities for that refund cycle', async () => {
+  const s = scenario(); s.client.refreshCash({ income: 40000, bills: 0 });
+  assert.equal((await s.run()).allocationId, 'bills');
+  assert.equal(s.client.creates[0].request.amountInCents, 30000);
+  assert.equal(event(s).children.bills.plan.gapCents, 50000);
+  assert.equal(child(s).status, 'SKIPPED');
+  assert.equal(child(s).reason, 'BILLS_PRIORITY_UNMET');
+  await finishFirst(s);
+  assert.equal(event(s).status, 'COMPLETE');
+  s.clock.advance(1000);
+  s.client.refreshCash({ income: 500000, bills: 30000 });
+  assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('unfunded or sub-dollar Bills deficits prevent every lower-priority transfer in that cycle', async (t) => {
+  for (const [name, income, bills] of [['protected Income', 10000, 0], ['provider minimum', 500000, 49950]]) {
+    await t.test(name, async () => {
+      const s = scenario(); s.client.refreshCash({ income, bills });
+      assert.equal((await s.run()).code, 'BILLS_PRIORITY_UNMET');
+      assert.equal(event(s).children.bills.status, 'NOOP');
+      assert.equal(child(s).status, 'SKIPPED');
+      assert.equal(event(s).status, 'COMPLETE');
+      s.client.refreshCash({ income: 900000, bills: 50000 });
+      assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+      noWrites(s);
+    });
+  }
+});
+
+test('a Bills target increase after settlement stops General without replaying the Bills intent', async () => {
+  const s = scenario(); s.client.refreshCash({ bills: 0 });
+  await s.run(); await finishFirst(s);
+  s.clock.advance(1000);
+  withBillsTarget(s, 100000);
+  s.client.refreshCash({ income: 450000, bills: 50000 });
+  assert.equal((await s.run()).code, 'BILLS_PRIORITY_UNMET');
+  assert.equal(child(s).status, 'SKIPPED');
+  assert.equal(event(s).status, 'COMPLETE');
+  assert.equal(s.client.creates.length, 1);
+  assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+});
+
+test('an increased Bills target also stops a waiting General plan after Bills needed no initial transfer', async () => {
+  const s = scenario();
+  s.client.accounts.get(ID(3)).balance.balanceLastUpdatedAt = asISO(TEST_NOW - 2 * 3600000);
+  assert.equal((await s.run()).code, 'WAITING_FOR_POST_SETTLEMENT_BALANCE');
+  assert.equal(event(s).children.bills.status, 'NOOP');
+  withBillsTarget(s, 100000);
+  s.clock.advance(1000); s.client.refreshCash();
+  assert.equal((await s.run()).code, 'BILLS_PRIORITY_UNMET');
+  assert.equal(child(s).status, 'SKIPPED');
+  noWrites(s);
+});
+
+test('a decreased target never reopens lower priorities after a partial Bills attempt', async () => {
+  const s = scenario(); withBillsTarget(s, 100000);
+  s.client.refreshCash({ income: 60000, bills: 0 });
+  await s.run();
+  assert.equal(child(s).status, 'SKIPPED');
+  s.clock.advance(1000); withBillsTarget(s, 50000, { catalogHash: 'c'.repeat(64) });
+  await finishFirst(s);
+  s.client.refreshCash({ income: 500000, bills: 50000 });
+  assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('uncertain Bills retries preserve the original request when the dynamic target grows', async () => {
+  const s = scenario(); s.client.refreshCash({ bills: 0 });
+  s.client.onCreate = (intent) => {
+    if (s.client.creates.length === 1) throw new SequenceError('NETWORK_ERROR', 'Synthetic request never arrived', { uncertain: true });
+    return s.client.acceptIntent(intent);
+  };
+  assert.equal((await s.run()).code, 'SUBMISSION_OUTCOME_UNKNOWN');
+  const original = structuredClone(s.client.creates[0]);
+  s.clock.advance(61000); withBillsTarget(s, 100000);
+  assert.equal((await s.run()).code, 'TOPUP_PENDING');
+  assert.deepEqual(s.client.creates[1], original);
+  assert.equal(original.request.amountInCents, 50000);
+  assert.equal(s.client.accepted.size, 1);
+});
+
+test('an uncertain Bills request that exceeds a decreased target requires review', async () => {
+  const s = scenario(); withBillsTarget(s, 100000); s.client.refreshCash({ bills: 0 });
+  s.client.onCreate = () => { throw new SequenceError('NETWORK_ERROR', 'Synthetic request never arrived', { uncertain: true }); };
+  await s.run();
+  const original = structuredClone(s.client.creates[0]);
+  s.clock.advance(61000); withBillsTarget(s, 50000, { catalogHash: 'c'.repeat(64) });
+  assert.equal((await s.run()).code, 'RETRY_NO_LONGER_FITS_CURRENT_BALANCES');
+  assert.equal(event(s).children.bills.status, 'REVIEW');
+  assert.equal(event(s).children.bills.idempotencyKey, original.idempotencyKey);
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('uncertain General retry protects the cycle Bills floor even after the catalog target decreases', async () => {
+  const s = scenario(); withBillsTarget(s, 100000);
+  s.client.refreshCash({ bills: 100000 });
+  s.client.onCreate = () => { throw new SequenceError('NETWORK_ERROR', 'Synthetic request never arrived', { uncertain: true }); };
+  assert.equal((await s.run()).code, 'SUBMISSION_OUTCOME_UNKNOWN');
+  assert.equal(s.client.creates[0].request.destinationAccountId, ID(3));
+  assert.equal(event(s).children.bills.plan.targetCents, 100000);
+  const original = structuredClone(s.client.creates[0]);
+  s.clock.advance(61000); withBillsTarget(s, 50000, { catalogHash: 'c'.repeat(64) });
+  s.client.refreshCash({ bills: 75000 });
+  assert.equal((await s.run()).code, 'RETRY_NO_LONGER_FITS_CURRENT_BALANCES');
+  assert.equal(child(s).status, 'REVIEW');
+  assert.equal(s.client.creates.length, 1);
+  assert.equal(child(s).idempotencyKey, original.idempotencyKey);
+  assert.deepEqual(child(s).request, original.request);
+});
+
+test('pending approval and failure of a Bills transfer both block General Spending', async () => {
+  const s = scenario(); s.client.refreshCash({ bills: 0 });
+  s.client.onCreate = (intent) => s.client.acceptIntent(intent, { status: 'APPROVAL_PENDING' });
+  assert.equal((await s.run()).code, 'PROVIDER_APPROVAL_REQUIRED');
+  assert.equal((await s.run()).code, 'PROVIDER_APPROVAL_REQUIRED');
+  assert.equal(child(s).status, 'WAITING');
+  Object.assign(s.client.transfers.get(topupId(s)), { status: 'ERROR', errorCode: 'PAYMENT_FAILED' });
+  assert.equal((await s.run()).code, 'TOPUP_DID_NOT_SETTLE');
+  assert.equal((await s.run()).code, 'UNRESOLVED_EVENT_REQUIRES_REVIEW');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('live Bills policy rejects stale or conflicting catalog versions without moving money', async (t) => {
+  for (const [name, changes, expected] of [
+    ['older catalog', { catalogUpdatedAt: asISO(TEST_NOW - 3 * 86400000) }, 'BILLS_CATALOG_ROLLBACK_BLOCKED'],
+    ['same timestamp, changed catalog', { catalogUpdatedAt: asISO(TEST_NOW - 2 * 86400000) }, 'BILLS_CATALOG_VERSION_CONFLICT'],
+    ['same version, changed target', { catalogHash: 'a'.repeat(64), catalogUpdatedAt: asISO(TEST_NOW - 2 * 86400000) }, 'BILLS_FORECAST_CHANGED_WITHOUT_CATALOG'],
+    ['older forecast year', { year: 2029 }, 'BILLS_CATALOG_ROLLBACK_BLOCKED'],
+  ]) {
+    await t.test(name, async () => {
+      const s = scenario(); s.client.transfers.clear();
+      await s.run();
+      withBillsTarget(s, 100000, changes);
+      assert.equal((await s.run()).code, expected);
+      noWrites(s);
+    });
+  }
+});
+
+test('a newer catalog may lower its target and the same catalog may roll to a new forecast year', async () => {
+  const s = scenario(); withBillsTarget(s, 100000); s.client.transfers.clear();
+  await s.run();
+  s.clock.advance(1000); withBillsTarget(s, 50000, { catalogHash: 'c'.repeat(64) });
+  assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+  const catalogUpdatedAt = s.config.calculatedBillsTarget.catalogUpdatedAt;
+  s.clock.advance(366 * 86400000);
+  withBillsTarget(s, 100000, { catalogHash: 'c'.repeat(64), catalogUpdatedAt, year: 2031 });
+  assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+  assert.equal(s.store.value.billsCatalog.year, 2031);
+  noWrites(s);
+});
+
+test('a confirmed future cancellation may lower the cap on its local effective date without a catalog revision', async () => {
+  const proof = { type: 'user_confirmation', reference: 'synthetic-policy', observedAt: '2029-12-29T12:00:00Z' };
+  const catalog = { schemaVersion: 1, timeZone: 'America/New_York', updatedAt: '2029-12-30T12:00:00Z', bills: [
+    { id: 'ongoing-expense', name: 'Synthetic ongoing expense', kind: 'expense', status: 'active',
+      amountCents: 20000, frequency: 'monthly', evidence: proof },
+    { id: 'ending-expense', name: 'Synthetic ending expense', kind: 'expense', status: 'canceled',
+      amountCents: 40000, frequency: 'monthly', evidence: proof,
+      cancellation: { confirmed: true, effectiveOn: '2030-01-03', reference: 'synthetic-cancellation' } },
+  ] };
+  const s = scenario(); s.client.transfers.clear();
+  const before = forecastBills(catalog, { now: s.clock.value });
+  s.config = withCalculatedBillsTarget(s.config, before);
+  assert.equal(before.targetCents, 100000);
+  assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+  s.clock.value = Date.parse('2030-01-03T05:00:00.000Z');
+  const after = forecastBills(catalog, { now: s.clock.value });
+  assert.equal(after.catalogHash, before.catalogHash);
+  assert.equal(after.catalogUpdatedAt, before.catalogUpdatedAt);
+  assert.equal(after.year, before.year);
+  assert.equal(after.effectiveDate, '2030-01-03');
+  assert.equal(after.targetCents, 50000);
+  s.config = withCalculatedBillsTarget(s.config, after);
+  assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
+  assert.equal(s.store.value.billsCatalog.targetCents, 50000);
+  s.config = withCalculatedBillsTarget(s.config, before);
+  assert.equal((await s.run()).code, 'BILLS_CATALOG_ROLLBACK_BLOCKED');
+  noWrites(s);
+});
+
+test('an old open ledger event without Bills requires migration and is not retroactively funded', async () => {
+  const s = scenario();
+  s.client.accounts.get(ID(3)).balance.balanceLastUpdatedAt = asISO(TEST_NOW - 2 * 3600000);
+  await s.run();
+  const oldState = structuredClone(s.store.value);
+  delete Object.values(oldState.events)[0].children.bills;
+  delete oldState.allocations.bills;
+  delete oldState.billsCatalog;
+  s.store.replaceForTest(oldState);
+  s.client.refreshCash();
+  assert.equal((await s.run()).code, 'BILLS_POLICY_MIGRATION_REQUIRED');
+  assert.equal(s.store.value.schemaVersion, 1);
+  noWrites(s);
+});
+
+test('an unresolved runtime Bills target cannot use an obsolete fixed buffer to submit', async () => {
+  const s = scenario({ calculatedBillsTarget: null });
+  assert.equal((await s.run()).code, 'BILLS_TARGET_UNAVAILABLE');
+  noWrites(s);
 });
 
 test('overdraft availability is not treated as owned cash', async () => {
@@ -253,7 +522,7 @@ test('overdraft availability is not treated as owned cash', async () => {
 
 test('no uncommitted cash, met targets and sub-dollar gaps complete without transfers', async (t) => {
   for (const [name, setup, expected] of [
-    ['all cash protected', (s) => s.client.refreshCash({ income: 45000, general: 0, bills: 15000 }), 'NO_UNCOMMITTED_INCOME'],
+    ['all cash protected', (s) => s.client.refreshCash({ income: 10000, general: 0, bills: 50000 }), 'NO_UNCOMMITTED_INCOME'],
     ['at target', (s) => s.client.refreshCash({ general: 300000 }), 'TARGET_ALREADY_MET'],
     ['above target', (s) => s.client.refreshCash({ general: 350000 }), 'TARGET_ALREADY_MET'],
     ['sub-dollar gap', (s) => s.client.refreshCash({ general: 299950 }), 'BELOW_PROVIDER_MINIMUM'],
@@ -454,7 +723,7 @@ test('a retry cannot increase its amount or exceed changed budgets and currently
     ['lowered budget', (s) => withBudget(s, 80000)],
     ['reduced source cash', (s) => s.client.refreshCash({ income: 150000 })],
     ['destination funded independently', (s) => s.client.refreshCash({ general: 200000 })],
-    ['new bill reserve shortfall', (s) => { s.config = makeConfig({ ...s.config, billsBufferCents: 400000 }); }],
+    ['new bill reserve shortfall', (s) => withBillsTarget(s, 400000)],
   ]) {
     await t.test(name, async () => {
       const s = scenario();
@@ -558,7 +827,7 @@ test('mismatched or failed accepted transfers require review and block additiona
 
 test('additional destination accounts serialize behind the first accepted intent', async () => {
   const secondary = { id: 'equipment', destinationAccountId: ID(6), monthlyBudgetCents: 21000,
-    reserveMonths: 2, targetCents: 42000, priority: 1, enabled: true, startsAt: null };
+    reserveMonths: 2, targetCents: 42000, priority: 2, enabled: true, startsAt: null };
   const s = scenario({ allocations: [...makeConfig().allocations, secondary] });
   s.client.accounts.set(ID(6), cashAccount(ID(6), 10000));
   await s.run();
@@ -584,7 +853,7 @@ test('a target added later does not replay old refunds and starts on a new eligi
   await s.run(); await finishFirst(s);
   const oldKey = event(s).key;
   const secondary = { id: 'equipment', destinationAccountId: ID(6), monthlyBudgetCents: 21000,
-    reserveMonths: 2, targetCents: 42000, priority: 1, enabled: true, startsAt: null };
+    reserveMonths: 2, targetCents: 42000, priority: 2, enabled: true, startsAt: null };
   s.config = makeConfig({ ...s.config, allocations: [...s.config.allocations, secondary] });
   s.client.accounts.set(ID(6), cashAccount(ID(6), 10000));
   assert.equal((await s.run()).code, 'NO_NEW_SETTLED_REFUND');
@@ -603,7 +872,7 @@ test('a target added later does not replay old refunds and starts on a new eligi
 
 test('re-enabling an additional allocation excludes unhandled older refunds and permits later payouts', async () => {
   const secondary = { id: 'equipment', destinationAccountId: ID(6), monthlyBudgetCents: 21000,
-    reserveMonths: 2, targetCents: 42000, priority: 1, enabled: false, startsAt: null };
+    reserveMonths: 2, targetCents: 42000, priority: 2, enabled: false, startsAt: null };
   const s = scenario({ allocations: [...makeConfig().allocations, secondary] });
   s.client.accounts.set(ID(6), cashAccount(ID(6), 10000));
   s.client.transfers.clear();
@@ -640,7 +909,7 @@ test('re-enabling an additional allocation excludes unhandled older refunds and 
 
 test('re-enabling cannot revive an older durable waiting child after an upstream-blocked disabled run', async () => {
   const secondary = { id: 'equipment', destinationAccountId: ID(6), monthlyBudgetCents: 21000,
-    reserveMonths: 2, targetCents: 42000, priority: 1, enabled: true, startsAt: null };
+    reserveMonths: 2, targetCents: 42000, priority: 2, enabled: true, startsAt: null };
   const s = scenario({ allocations: [...makeConfig().allocations, secondary] });
   s.client.accounts.set(ID(6), cashAccount(ID(6), 10000));
   s.client.refreshCash({ general: 300000 });
@@ -695,7 +964,8 @@ test('activation, source/rule bindings and existing destination identity cannot 
   for (const [name, change, expected] of [
     ['activation moved', (s) => ({ activationAt: asISO(TEST_NOW - 12 * 3600000) }), 'ACTIVATION_TIME_CHANGED'],
     ['source changed', (s) => ({ accounts: { ...s.config.accounts, income: ID(99) } }), 'ACCOUNT_OR_RULE_BINDING_CHANGED'],
-    ['destination changed', (s) => ({ allocations: [{ ...s.config.allocations[0], destinationAccountId: ID(99) }] }), 'ALLOCATION_DESTINATION_CHANGED'],
+    ['destination changed', (s) => ({ allocations: s.config.allocations.map((allocation) => allocation.id === 'general-spending'
+      ? { ...allocation, destinationAccountId: ID(99) } : allocation) }), 'ALLOCATION_DESTINATION_CHANGED'],
   ]) {
     await t.test(name, async () => {
       const s = scenario(); s.client.refreshCash({ general: 300000 });

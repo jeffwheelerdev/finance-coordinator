@@ -1,6 +1,6 @@
 # Deployment and deliberate activation
 
-The repository is configured for inactive operation. These steps describe the
+Version 0.4.0 is configured for inactive operation. These steps describe the
 operating requirements; they are not a record that deployment, webhook
 registration, or financial activation has occurred. Verification uses offline
 tests and provider reads. Do not make a live transfer to test this setup.
@@ -27,6 +27,18 @@ Preview deployments must stay unconfigured or use isolated storage and
 credentials; never give them the production ledger token. Operational routes
 also refuse requests when `VERCEL_ENV=preview`.
 
+Connect a separate private Global Config store through `GLOBAL_CONFIG`. Supply
+the validated `bills_catalog` and matching `bills_monitor` items, then establish
+the monitoring process described in [Bills monitoring](bills-monitor.md).
+The monitor's last successful check must be no older than seven days. The
+runtime reads both items consistently from the origin and does not accept
+stale-on-error fallback. This store supplies policy; it must not replace the
+Blob execution ledger. Catalog updates take effect without deploying code.
+
+The fixed `BILLS_BUFFER_TARGET` setting is obsolete and ignored. The current
+Bills target must come from the annual calendar forecast, rounded up to a $500
+boundary. A deployment without usable current Bills policy cannot submit.
+
 Set `FINANCE_CANONICAL_HOST` to the stable production alias's hostname. Production
 reconciliation and webhooks refuse other hostnames, so an old deployment URL
 cannot submit using its old environment. Authenticated read endpoints on an
@@ -40,9 +52,13 @@ The legacy manual General Spending top-up rule must remain disabled to avoid
 duplicate independent execution. The coordinator checks rule state; it does
 not edit these rules or their financial policy.
 
+No additional native Sequence top-up rule is required for Bills or General
+Spending. The coordinator submits exact transfers after the same verified Pod
+refund. Do not activate upstream rules as part of an inactive deployment check.
+
 Review the existing key's exact `MANUAL_TRANSFER` permission for
-Income→General Spending, its amount cap if present, and each future recipient
-pair. The cap must accommodate the intended request or the provider will reject
+both Income→Bills and Income→General Spending, their amount caps if present,
+and each future recipient pair. A cap must accommodate the intended request or the provider will reject
 it. Unattended operation requires the permission's approval requirement to be
 disabled. A read-only preflight cannot introspect and certify these settings.
 If approval is required, an accepted transfer waits for approval; the
@@ -56,6 +72,7 @@ secret privately; do not place it in URLs, screenshots, or committed commands.
 | --- | --- |
 | `GET /api/health` | Public basic configuration and mode status. |
 | `GET /api/status` | Effective private policy summary, latest run, and unresolved-state indicators. |
+| `GET /api/bills` | Aggregate twelve-month Bills forecast, dynamic cap and monitor metadata; no private bill rows. |
 | `GET /api/preflight` | Read-only rule, account, upstream-history, and ledger checks. No provider or ledger writes. |
 | `GET /api/plan` | Read-only evidence and funding plan; does not claim or consume an event. |
 | `GET` or bodyless `POST /api/reconcile` | Operational reconciliation; may update the ledger and submit a transfer when live. |
@@ -64,6 +81,8 @@ secret privately; do not place it in URLs, screenshots, or committed commands.
 Passing read checks does not prove write permission or establish that funds
 are currently eligible. A future activation cutoff is reported as not started;
 its upstream window is checked once that window exists.
+Public health checks report configuration booleans; they do not prove fresh
+catalog evidence, complete bill coverage, current bank balances or transfer scope.
 
 `npm run preflight`, and the production build's preflight, force observation
 and disable financial POSTs even if the configured live gates are on. They
@@ -85,13 +104,20 @@ deployments, as described in its [environment documentation](https://vercel.com/
 The timestamp is a lower bound, not an appointment to move money. No submission
 is eligible before it. Thereafter an actual new Pod refund, completed payout,
 upstream checks, available cash, and suitable post-settlement snapshots must
-all qualify. A payout without a refund does not trigger funding. A partial fill
-uses that event once; normal spending does not cause continuous replenishment.
+all qualify. Bills receives the first eligible transfer while preserving the
+explicit Income reserve; its deficit is not reserved a second time. General
+Spending waits for Bills completion and post-settlement balances. A partial or
+unfunded Bills attempt skips lower recipients for that refund cycle.
+A payout without a refund does not trigger funding. A partial fill uses that
+event once; normal spending does not cause continuous replenishment.
 
 Once recorded by live operation, the cutoff and ledger history are permanent.
 Never reset state, change the ledger prefix, or move the cutoff forward to
 remove failures or replay work. Source/rule identity changes require a reviewed
 migration, not a routine environment edit.
+Existing live open events that predate Bills-first policy require reviewed
+migration. Do not add a Bills child retroactively or clear the ledger. An
+inactive ledger without financial events transitions without resetting state.
 
 ## 4. Scheduling and optional webhooks
 
@@ -100,6 +126,11 @@ the `CRON_SECRET` bearer header. Hobby schedules may run at any point within the
 scheduled hour. Provider settlement and bank-balance refresh can add further
 delay. See [cron authorization](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
 and [cron timing](https://vercel.com/docs/cron-jobs/usage-and-pricing).
+
+The separate Bills monitor checks Finances and updates private policy; it does
+not initiate transfers or change activation gates. Its schedule and collector
+contract are documented in [Bills monitoring](bills-monitor.md). Catalog or cap
+changes alone do not create a funding event.
 
 Webhooks are optional and are not registered by this repository. Register the
 actual canonical `/api/webhook` endpoint in Sequence and store its issued
@@ -118,6 +149,12 @@ Pause new submissions by setting `LIVE_TRANSFERS_ENABLED=false` and deploying
 that change to the canonical host. Keep the same ledger, cutoff, and bindings.
 Previously accepted transfers can still settle; the engine continues observing
 their provider identities while paused.
+
+The same limited observation is available during a Bills-policy outage when
+the ledger already contains an accepted transfer ID. Missing or stale policy
+cannot authorize a new transfer or retry an uncertain request with no saved
+provider ID. Restore valid catalog and monitoring evidence before resuming
+financial work; do not substitute the old fixed buffer.
 
 For a `waiting` result, inspect the reason: pending transfers, stale balances,
 or missing post-settlement evidence need subsequent reads. For `blocked`,

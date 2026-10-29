@@ -1,10 +1,12 @@
 {
   "name": "finance-coordinator",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Durable refund-triggered balance targets for Sequence, staged for deliberate activation.",
-  "engines": { "node": "22.x || 24.x" },
+  "engines": {
+    "node": "22.x || 24.x"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "test:archives": "python scripts/test_archives.py",
@@ -13,7 +15,8 @@
   },
   "dependencies": {
     "@vercel/blob": "2.8.2",
-    "@vercel/functions": "3.3.4"
+    "@vercel/functions": "3.3.4",
+    "@vercel/global-config": "1.5.1"
   },
   "overrides": {
     "@vercel/blob": {

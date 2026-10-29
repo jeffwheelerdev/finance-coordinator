@@ -2,11 +2,16 @@
 
 ## Version boundary
 
-The root application is the newly authored 0.3.0 Node.js coordinator. Sequence
+The root application is the newly authored 0.4.0 Node.js coordinator. Sequence
 owns account connections, rules, and transfer execution; the coordinator reads
 evidence and, when explicitly activated, submits constrained Income→recipient
 transfers. Vercel Functions runs it and a private Blob ledger preserves its
 decisions across invocations.
+
+Private Global Config supplies Bills obligations and a recent monitoring
+heartbeat. A separate scheduled ChatGPT task reads Finances evidence and
+updates that configuration. The deployed function does not access the Finances
+connector. The catalog update and the financial execution paths remain separate.
 
 The Python decision core and 0.1.0 observer in `archive/` are historical work.
 The observer is read-only, and its PostgreSQL schema is not the current storage
@@ -61,30 +66,77 @@ All arithmetic uses exact integer cents. For Income, Bills, and the destination,
 cash is the lesser of current and available balances. Credit or overdraft
 availability cannot increase the usable cash amount.
 
+The first allocation is Bills:
+
 ```text
-target           = monthly budget × reserve months
-bills shortfall  = max(0, Bills buffer target − Bills cash)
-protected Income = explicit Income reserve + bills shortfall
-usable Income    = max(0, Income cash − protected Income)
-target gap       = max(0, target − destination cash)
-transfer         = min(target gap, usable Income)
+Bills target    = ceil(highest forecast month / 50,000 cents) × 50,000 cents
+Bills gap       = max(0, Bills target − Bills cash)
+usable Income   = max(0, Income cash − explicit Income reserve)
+Bills transfer  = min(Bills gap, usable Income)
 ```
 
-The coordinator reserves the Bills shortfall in Income; it does not itself
-transfer that reserve to Bills. An amount below the provider's minimum is a
-recorded no-op. There is no borrowing, reverse withdrawal, or transfer solely
-because spending has reduced a destination balance.
+The Bills transfer fills the deficit itself, so that deficit is not also
+subtracted from usable Income. A full Bills transfer must settle before a
+lower-priority allocation is planned. All required external cash snapshots
+must then postdate settlement. If Bills already meets its target, a recorded
+no-op can proceed to the next plan in the same invocation.
 
-General Spending always has priority zero. Additional enabled recipients run
-in ascending priority and stable-ID order, sharing the same Income protection.
-Each accepted transfer must resolve, and subsequent cash evidence must reflect
-settlement, before another recipient can spend from Income.
+Bills has effective priority zero, General Spending priority one, and optional
+recipients priority two or later. Existing optional ranks receive a one-position
+offset while preserving relative order. For a lower-priority recipient:
+
+```text
+target           = monthly budget × reserve months
+Bills floor      = max(current calculated target, this cycle's prior Bills target)
+Bills shortfall  = max(0, Bills floor − Bills cash)
+protected Income = explicit Income reserve + Bills shortfall
+usable Income    = max(0, Income cash − protected Income)
+target gap       = max(0, target − destination cash)
+transfer         = min(target gap, usable Income), only if Bills shortfall is zero
+```
+
+The earlier cycle target remains protected even when the catalog target falls.
+An increased target must also be met before lower priorities proceed. Every
+accepted transfer must resolve, and new cash evidence must reflect settlement,
+before another recipient can spend from Income.
+
+Each recipient receives at most one immutable intent per refund. If the Bills
+amount is partial, or an unmet Bills deficit cannot produce a provider-eligible
+amount, all lower recipients are permanently skipped for that event. Later
+money or catalog changes do not revive the event. A new refund can create a
+new opportunity. There is no borrowing, reverse withdrawal, or transfer solely
+because spending has reduced a balance.
+
+## Forecast and private source freshness
+
+`lib/bills.mjs` projects twelve local calendar months using current obligations.
+Annual charges stay in renewal months, and unknown annual dates are grouped
+conservatively into the highest month. Weekly and biweekly schedules use actual
+calendar occurrence counts. Uncertain expenses remain included. Confirmed
+future cancellations stop contributing only when their effective date arrives.
+Card payments and own-account transfers are excluded from duplicated expenses.
+The catalog is a projection input, not a claim of complete bank coverage.
+
+The runtime reads `bills_catalog` and `bills_monitor` in one Global Config call
+with `consistentRead: true`, caching disabled and `staleIfError: false`.
+The validated monitor must match the catalog revision and report a successful
+check no older than seven days. A missing, stale, malformed or unavailable
+source blocks new submissions; there is no old-policy fallback. Only observation
+of an already accepted transfer with a saved provider ID can continue without
+fresh policy. See [Bills monitoring](bills-monitor.md) for the updater contract.
+
+The ledger records catalog time, hash, forecast year and local effective date.
+Older catalog timestamps, older years or older effective dates are rejected.
+Different content cannot reuse a catalog timestamp. A changed forecast for
+the same catalog and year requires a later effective date, allowing a scheduled
+cancellation without inventing a new catalog revision. Plans retain their own
+catalog provenance and target even as subsequent policy changes.
 
 ## Durable event and request state
 
 The private object `finance-v3/ledger.json` records activation, bindings,
 recipient eligibility, refund events, immutable requests, provider transfer IDs,
-and webhook receipts. The activation cutoff, ledger location, and recorded
+webhook receipts, and the latest accepted Bills policy metadata. The activation cutoff, ledger location, and recorded
 identity bindings are durable operating history. Never reset or delete this
 ledger, change its prefix, or advance the activation cutoff to clear an error.
 
@@ -103,6 +155,16 @@ later. Budget edits do not replay completed events. New or re-enabled recipients
 are prospective: the ledger's eligibility floor and any `startsAt` date exclude
 older payout executions.
 
+Observation and forced build checks may record run metadata or observe an
+already accepted transfer. Planning an existing open event uses a copy: it
+cannot persist simulated no-ops, skips, completed children or consumed events.
+The HTTP plan endpoint performs no ledger writes.
+
+An existing live open event from an older policy that lacks a Bills child
+requires reviewed migration; it is not retrofitted into new financial work.
+An inactive ledger without financial event history needs no reset. The ledger
+schema version and permanent event identities remain unchanged.
+
 ## Concurrency and uncertain outcomes
 
 Blob conditional writes compare the current ETag before committing a change.
@@ -114,6 +176,8 @@ An uncertain response never creates a fresh request key. The identical key and
 body can be retried only within 23 hours of the first attempt, inside Sequence's
 24-hour idempotency period, and only after current evidence still supports the
 entire frozen amount. Lowering a budget cannot enlarge or resize that request.
+The retry also retains the cycle's earlier Bills target floor, so a lower
+current catalog target cannot release money protected by the original plan.
 If a pending movement prevents fresh verification, the engine waits; it does
 not infer identity from similar amounts or dates. At the recovery-window limit,
 an unresolved submission requires review. Some network failures therefore need

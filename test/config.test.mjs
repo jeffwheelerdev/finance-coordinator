@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ConfigError, VERSION, loadConfig, parseMoney, summarizeConfig } from '../lib/config.mjs';
+import { ConfigError, VERSION, loadConfig, parseMoney, summarizeConfig, withCalculatedBillsTarget } from '../lib/config.mjs';
 
 const uuid = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const accounts = { income: uuid(1), pod: uuid(2), general: uuid(3), bills: uuid(4) };
@@ -15,6 +15,9 @@ const extra = overrides => ({
   id: 'future-savings', destinationAccountId: uuid(20), monthlyBudget: '98.76',
   reserveMonths: 2, priority: 1, ...overrides,
 });
+const general = (config) => config.allocations.find((allocation) => allocation.id === 'general-spending');
+const forecast = (overrides = {}) => ({ targetCents: 500000, peakMonthCents: 470123,
+  catalogHash: 'a'.repeat(64), catalogUpdatedAt: '2029-12-31T00:00:00.000Z', year: 2030, effectiveDate: '2030-01-02', ...overrides });
 function rejects(fn, code) {
   assert.throws(fn, error => error instanceof ConfigError && (!code || error.code === code));
 }
@@ -36,7 +39,7 @@ test('money rejects approximation, coercion, signs, precision loss, and ambiguou
 
 test('required configuration has no financial or account defaults', () => {
   for (const key of ['APP_MODE', 'FINANCE_ACCOUNT_IDS_JSON', 'FINANCE_RULE_IDS_JSON',
-    'GENERAL_SPENDING_MONTHLY_BUDGET', 'GENERAL_SPENDING_RESERVE_MONTHS', 'BILLS_BUFFER_TARGET', 'INCOME_RESERVE']) {
+    'GENERAL_SPENDING_MONTHLY_BUDGET', 'GENERAL_SPENDING_RESERVE_MONTHS', 'INCOME_RESERVE']) {
     const input = env(); delete input[key];
     rejects(() => loadConfig(input), 'MISSING_CONFIG');
   }
@@ -44,21 +47,24 @@ test('required configuration has no financial or account defaults', () => {
 
 test('target derives from configurable budget and reserve months, without a fixed target', () => {
   const config = loadConfig(env());
-  assert.equal(VERSION, '0.3.0');
-  assert.equal(config.allocations[0].monthlyBudgetCents, 123456);
-  assert.equal(config.allocations[0].targetCents, 370368);
-  assert.equal(config.billsBufferCents, 456789);
+  assert.equal(VERSION, '0.4.0');
+  assert.equal(general(config).monthlyBudgetCents, 123456);
+  assert.equal(general(config).targetCents, 370368);
+  assert.equal(config.allocations[0].id, 'bills');
+  assert.equal(config.allocations[0].priority, 0);
+  assert.equal(general(config).priority, 1);
+  assert.equal(config.billsBufferCents, null);
   assert.equal(config.incomeReserveCents, 32109);
   assert.equal(config.maxBalanceAgeMs, 26 * 3_600_000);
   assert.equal(config.activationAt, null);
   assert.equal(config.liveEnabled, false);
   const edited = loadConfig(env({ GENERAL_SPENDING_MONTHLY_BUDGET: '1434.56' }));
-  assert.equal(edited.allocations[0].targetCents, 430368);
+  assert.equal(general(edited).targetCents, 430368);
   assert.notEqual(edited.configHash, config.configHash);
 });
 
 test('zero budget is valid while invalid reserve-month counts and target overflow fail', () => {
-  assert.equal(loadConfig(env({ GENERAL_SPENDING_MONTHLY_BUDGET: '0' })).allocations[0].targetCents, 0);
+  assert.equal(general(loadConfig(env({ GENERAL_SPENDING_MONTHLY_BUDGET: '0' }))).targetCents, 0);
   for (const value of ['0', '-1', '1.5', '2e1', 'NaN', '9007199254740992']) {
     rejects(() => loadConfig(env({ GENERAL_SPENDING_RESERVE_MONTHS: value })), 'INVALID_INTEGER');
   }
@@ -124,18 +130,20 @@ test('additional allocations have computed targets, deterministic ordering, and 
     extra({ id: 'b-fund', priority: 1, startsAt: '2031-01-01T00:00:00-05:00' }),
     extra({ id: 'a-fund', priority: 1, destinationAccountId: uuid(22), enabled: false })];
   const config = loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify(extras) }));
-  assert.deepEqual(config.allocations.map(item => item.id), ['general-spending', 'a-fund', 'b-fund', 'z-fund']);
-  assert.equal(config.allocations[1].enabled, false);
-  assert.equal(config.allocations[2].enabled, true);
-  assert.equal(config.allocations[2].targetCents, 19752);
-  assert.equal(config.allocations[2].startsAt, '2031-01-01T05:00:00.000Z');
+  assert.deepEqual(config.allocations.map(item => item.id), ['bills', 'general-spending', 'a-fund', 'b-fund', 'z-fund']);
+  assert.deepEqual(config.allocations.map(item => item.priority), [0, 1, 2, 2, 3]);
+  assert.equal(config.allocations[2].enabled, false);
+  assert.equal(config.allocations[3].enabled, true);
+  assert.equal(config.allocations[3].targetCents, 19752);
+  assert.equal(config.allocations[3].startsAt, '2031-01-01T05:00:00.000Z');
 });
 
 test('additional allocations reject duplicate identities and unsafe destination roles', () => {
-  for (const item of [extra({ id: 'general-spending' }), extra({ destinationAccountId: accounts.general })]) {
+  for (const item of [extra({ id: 'general-spending' }), extra({ id: 'bills' }),
+    extra({ destinationAccountId: accounts.general }), extra({ destinationAccountId: accounts.bills })]) {
     rejects(() => loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify([item]) })), 'DUPLICATE_ALLOCATION');
   }
-  for (const destinationAccountId of [accounts.income, accounts.pod, accounts.bills]) {
+  for (const destinationAccountId of [accounts.income, accounts.pod]) {
     rejects(() => loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify([extra({ destinationAccountId })]) })), 'INVALID_DESTINATION');
   }
   rejects(() => loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify([extra(), extra({ id: 'other' })]) })), 'DUPLICATE_ALLOCATION');
@@ -151,9 +159,9 @@ test('additional allocation schema is strict and never coerces financial fields'
   rejects(() => loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify([missing]) })), 'INVALID_CONFIG');
 });
 
-test('at most ten total allocations including General Spending are accepted', () => {
+test('nine existing optional recipients remain supported after adding mandatory Bills', () => {
   const extras = Array.from({ length: 9 }, (_, i) => extra({ id: `fund-${i}`, destinationAccountId: uuid(100 + i) }));
-  assert.equal(loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify(extras) })).allocations.length, 10);
+  assert.equal(loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify(extras) })).allocations.length, 11);
   extras.push(extra({ id: 'fund-over-limit', destinationAccountId: uuid(200) }));
   rejects(() => loadConfig(env({ FINANCE_ALLOCATIONS_JSON: JSON.stringify(extras) })), 'INVALID_ALLOCATIONS');
 });
@@ -176,6 +184,40 @@ test('administration summary contains no provider identifiers or credential fiel
   const summary = summarizeConfig(config), text = JSON.stringify(summary);
   for (const id of [...Object.values(accounts), ...Object.values(rules), uuid(20)]) assert.equal(text.includes(id), false);
   assert.equal(text.includes('destinationAccountId'), false);
-  assert.equal(summary.allocations[0].targetCents, 370368);
+  assert.equal(summary.allocations[1].targetCents, 370368);
   assert.equal(summary.version, VERSION);
+});
+
+test('runtime Bills forecast replaces the obsolete fixed buffer without changing other targets', () => {
+  const base = loadConfig(env());
+  const resolved = withCalculatedBillsTarget(base, forecast());
+  assert.equal(base.billsBufferCents, null);
+  assert.equal(resolved.billsBufferCents, 500000);
+  assert.equal(resolved.allocations[0].targetCents, 500000);
+  assert.equal(general(resolved).targetCents, 370368);
+  assert.equal(resolved.calculatedBillsTarget.catalogUpdatedAt, '2029-12-31T00:00:00.000Z');
+  assert.notEqual(resolved.configHash, base.configHash);
+  const absentLegacy = env(); delete absentLegacy.BILLS_BUFFER_TARGET;
+  assert.equal(loadConfig(absentLegacy).configHash, base.configHash);
+  assert.equal(loadConfig(env({ BILLS_BUFFER_TARGET: '9999.99' })).configHash, base.configHash);
+  assert.notEqual(withCalculatedBillsTarget(base, forecast({ targetCents: 550000 })).configHash, resolved.configHash);
+});
+
+test('Bills target resolution rejects incomplete or inconsistent forecast evidence', () => {
+  const base = loadConfig(env());
+  for (const value of [null, {}, forecast({ targetCents: 499999 }), forecast({ targetCents: 0 }),
+    forecast({ targetCents: Number.MAX_SAFE_INTEGER + 1 }), forecast({ catalogHash: 'missing' }),
+    forecast({ catalogUpdatedAt: '2030-02-30T00:00:00Z' }), forecast({ catalogUpdatedAt: undefined }),
+    forecast({ effectiveDate: '2030-02-30' }), forecast({ effectiveDate: undefined }),
+    forecast({ year: 2030.5 })]) rejects(() => withCalculatedBillsTarget(base, value));
+  assert.throws(() => withCalculatedBillsTarget({ ...base, allocations: base.allocations.slice(1) }, forecast()),
+    { code: 'BILLS_TARGET_UNAVAILABLE' });
+});
+
+test('runtime summaries expose aggregate Bills policy and omit private catalog rows', () => {
+  const result = withCalculatedBillsTarget(loadConfig(env()), forecast({ bills: [{ name: 'private-test-payee' }] }));
+  const summary = summarizeConfig(result);
+  assert.equal(summary.calculatedBillsTarget.targetCents, 500000);
+  assert.equal(JSON.stringify(summary).includes('private-test-payee'), false);
+  assert.equal(JSON.stringify(result).includes('private-test-payee'), false);
 });

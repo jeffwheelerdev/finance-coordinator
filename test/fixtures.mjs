@@ -12,10 +12,14 @@ export function makeConfig(overrides = {}) {
   const config = {
     mode: 'live', liveEnabled: true, activationAt: asISO(TEST_NOW - 24 * 3600000),
     accounts, rules: { funding: ID(11), payout: ID(12), legacyGeneral: ID(13), ...overrides.rules },
-    allocations: [{ id: 'general-spending', destinationAccountId: accounts.general,
+    allocations: [{ id: 'bills', destinationAccountId: accounts.bills,
+      monthlyBudgetCents: null, reserveMonths: null, targetCents: 50000,
+      priority: 0, enabled: true, startsAt: null }, { id: 'general-spending', destinationAccountId: accounts.general,
       monthlyBudgetCents: 100000, reserveMonths: 3, targetCents: 300000,
-      priority: 0, enabled: true, startsAt: null }],
+      priority: 1, enabled: true, startsAt: null }],
     billsBufferCents: 50000, incomeReserveCents: 10000, maxBalanceAgeMs: 26 * 3600000,
+    calculatedBillsTarget: { targetCents: 50000, catalogHash: 'a'.repeat(64),
+      catalogUpdatedAt: asISO(TEST_NOW - 2 * 86400000), year: 2030, effectiveDate: '2030-01-02', peakMonthCents: 45000 },
     ...overrides,
   };
   config.accounts = accounts;
