@@ -2,6 +2,12 @@
 
 Recovery date: October 29, 2026.
 
+The repository root now contains a complete, newly authored **0.3.0** runtime.
+It uses verified provider contracts and the recovered design intent. It does not
+represent a recovery of the five missing 0.2.1 files below. This page and the
+source manifest preserve the historical recovery record; that missing export
+does not prevent building the new implementation.
+
 ## Complete historical bundles
 
 The two original source ZIPs were recovered and extracted. Their sanitized
@@ -18,9 +24,9 @@ Both original suites and both sanitized copies passed locally using synthetic
 evidence or mocks. Archive provenance files contain the original archive and
 source hashes, with a record of the publication transformations.
 
-## Current deployment: 0.2.1
+## Deployment observed during recovery: 0.2.1
 
-The current source tree has eight files. The source-export integration returns
+That deployment's source tree has eight files. The source-export integration returns
 only a truncated base64 prefix for five of them. Truncated files have not been
 committed or represented as complete source.
 
@@ -44,14 +50,15 @@ The recovered package version is `0.2.0`, while the configuration's exported
 `VERSION` is `0.2.1`. The snapshot preserves that mismatch; it does not silently
 alter the recovered source metadata.
 
-## Safe completion of the import
+## Completing the historical import, if desired
 
 Match recovered source bytes against the expected deployment hashes. Keep
 private source copies outside this public repository, then remove account and
 rule identifiers from publishable code in favor of validated environment
 configuration. Record that transformation separately from exact recovery.
 
-After all files are present, review imports, dependency locking, current test
-coverage, and runtime behavior. Historical test results must not be presented
-as current-runtime validation. Moving the complete runtime to the repository
-root and connecting deployment automation require a separate reviewed change.
+Any subsequently recovered files belong in a clearly identified historical
+snapshot, with their original hashes preserved. They must not overwrite the
+new root runtime merely because filenames coincide. Historical test results
+must not be presented as validation of either the missing original 0.2.1 code
+or the separately authored 0.3.0 implementation.

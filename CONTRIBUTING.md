@@ -1,35 +1,48 @@
 # Working on Finance Coordinator
 
-## Local validation
+## Offline validation
 
-Run the recovered historical suites from the repository root:
+Use Node.js 22 or 24 and Python 3.12. From the repository root:
 
 ```bash
+npm ci --ignore-scripts
+npm test
 python3 scripts/test_archives.py
 ```
 
-The suites use synthetic data and mocked adapters. No provider credentials are
-needed. The runner removes finance credentials from each test process and sets
-observation mode. Passing historical tests does not validate a newer runtime.
+Current tests use injected, mocked adapters and synthetic evidence. Historical
+Python suites use the standard library and mocked providers. These commands
+need no financial credentials. Passing tests validates the exercised code
+paths; it is not a live financial test or proof of deployment configuration.
 
-## Repository boundaries
+`npm run preflight` has a different purpose: with private environment settings
+it reads the real provider and can conditionally write observation metadata to
+the configured ledger. Production builds run this forced-observation check.
+Neither may make a financial POST. See [activation](docs/activation.md) before
+using real deployment configuration.
 
-- Keep current runtime code distinct from historical material in `archive/`.
-- Preserve source provenance when recovering a previous deployment. Do not
-  represent a partial export or a reimplementation as the original source.
-- Use synthetic identifiers, events, and balances in examples and fixtures.
-- Keep account mappings, provider IDs, personal notes, keys, and state files
-  outside commits. `.gitignore` covers common local configuration paths.
-- Keep secrets in the appropriate deployment environment. Do not paste them
-  into issues, pull requests, logs, or documentation.
+## Source and privacy boundaries
 
-## Changes to financial execution
+- Keep the new 0.3.0 runtime distinct from historical material in `archive/`
+  and the incomplete 0.2.1 snapshot.
+- Preserve provenance. A reimplementation or partial export is not recovered
+  original source.
+- Use synthetic IDs, balances, and events in fixtures and examples. Keep real
+  mappings, personal policies, financial state, and credentials out of commits,
+  issues, pull requests, screenshots, and logs.
+- Keep GitHub Actions limited to offline tests, without financial or deployment
+  credentials. Source publication does not activate financial rules.
 
-Use mocked adapters for development and tests. Inspect failure, retry,
-concurrency, and stale-data behavior before changing execution logic. Unknown
-transfer outcomes need reconciliation before a retry can be considered safe.
+## Changes to execution behavior
 
-Repository maintenance does not activate financial rules or authorize a live
-test. Deployment, configuration changes, and financial activation are separate
-operations. This repository's CI runs tests only and has no financial secrets or
-deployment credentials.
+Use meaningful offline cases for identity, settlement, stale balances, reserves,
+partial funds, duplicate polls, concurrency, uncertain outcomes, and policy
+edits. Verify that disabled gates and forced observation prevent every financial
+POST, including retry paths. Preserve the immutable body and idempotency key
+after a submission may have reached the provider.
+
+Never delete or reset the production ledger to simplify a test. Do not attach
+previews to production storage or run a second production writer. No live
+transfer, provider-rule change, or financial activation is part of routine
+repository validation. Document behavior changes and their operational limits
+alongside code.

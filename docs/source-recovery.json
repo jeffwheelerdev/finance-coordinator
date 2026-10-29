@@ -1,5 +1,6 @@
 {
   "source_version": "0.2.1",
+  "scope": "Historical 0.2.1 deployment export; root 0.3.0 is a separately authored replacement.",
   "recovered_at_date": "2026-10-29",
   "complete": false,
   "deployable": false,
@@ -62,7 +63,7 @@
   ],
   "limitations": [
     "The source export truncates base64 content for larger files.",
-    "Five current runtime files are not yet fully recovered.",
+    "Five historical 0.2.1 runtime files are not yet fully recovered.",
     "The private source account and rule mapping is replaced by a synthetic example.",
     "The recovered package metadata says 0.2.0 while the source VERSION constant says 0.2.1."
   ]

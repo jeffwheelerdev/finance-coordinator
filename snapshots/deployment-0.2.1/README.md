@@ -1,8 +1,9 @@
-# Partial current-deployment snapshot
+# Partial historical deployment snapshot
 
 This directory preserves three fully recovered configuration/metadata files
 from source version `0.2.1`. The five runtime implementation files are still
-missing. **Do not deploy this directory.**
+missing. **Do not deploy this directory.** The complete 0.3.0 runtime at the
+repository root is newly authored and does not change this recovery record.
 
 - `package.json` and `vercel.json` are the exact recovered bytes, checked against
   the deployment source hashes.
@@ -12,7 +13,7 @@ missing. **Do not deploy this directory.**
 - The package metadata retains its original `0.2.0` version, while the source
   configuration says `0.2.1`; this discrepancy is documented rather than hidden.
 
-There are no application entry points or current-runtime tests here. See
+There are no application entry points or 0.2.1 runtime tests here. See
 [`../../docs/recovery.md`](../../docs/recovery.md) and
 [`../../docs/source-recovery.json`](../../docs/source-recovery.json) for the
 exact recovery status and expected hashes.
