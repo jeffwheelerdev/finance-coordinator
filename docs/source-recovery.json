@@ -1,0 +1,69 @@
+{
+  "source_version": "0.2.1",
+  "recovered_at_date": "2026-10-29",
+  "complete": false,
+  "deployable": false,
+  "method": "Authenticated deployment source export",
+  "files": [
+    {
+      "source_path": "lib/config.mjs",
+      "source_sha1": "80dc7ee10c5d2b87ecf8dd72bd71f293eebbdedb",
+      "bytes": 1285,
+      "recovery": "complete; source SHA-1 verified",
+      "published_path": "snapshots/deployment-0.2.1/config.example.mjs",
+      "publication_transform": "Account/rule identifiers and example target values replaced with distinctly synthetic configuration; warning header added."
+    },
+    {
+      "source_path": "package.json",
+      "source_sha1": "609b6b0913e2cb53780c57b386396cba114aa040",
+      "bytes": 195,
+      "recovery": "complete; source SHA-1 verified",
+      "published_path": "snapshots/deployment-0.2.1/package.json",
+      "publication_transform": "None; original bytes preserved."
+    },
+    {
+      "source_path": "vercel.json",
+      "source_sha1": "3d9ba30dfa62124502cbc66dd20209aa47861f28",
+      "bytes": 868,
+      "recovery": "complete; source SHA-1 verified",
+      "published_path": "snapshots/deployment-0.2.1/vercel.json",
+      "publication_transform": "None; original bytes preserved."
+    },
+    {
+      "source_path": "api/index.mjs",
+      "source_sha1": "8b1c5accc4e160e54108deb6dfd3f15fdbbc5fe6",
+      "recovery": "missing; export truncated",
+      "published_path": null
+    },
+    {
+      "source_path": "lib/engine.mjs",
+      "source_sha1": "c5002daace030dd9928bec4cf8463bf0e11e8444",
+      "recovery": "missing; export truncated",
+      "published_path": null
+    },
+    {
+      "source_path": "lib/policy.mjs",
+      "source_sha1": "4cd90da4b66c6ea8ccff8f1f19e502e1792b3342",
+      "recovery": "missing; export truncated",
+      "published_path": null
+    },
+    {
+      "source_path": "lib/sequence.mjs",
+      "source_sha1": "36a316ff7fb3bca00baa6d013492086398587762",
+      "recovery": "missing; export truncated",
+      "published_path": null
+    },
+    {
+      "source_path": "lib/store.mjs",
+      "source_sha1": "b8d163dfa3441efea4203bf47caef812e48dd59e",
+      "recovery": "missing; export truncated",
+      "published_path": null
+    }
+  ],
+  "limitations": [
+    "The source export truncates base64 content for larger files.",
+    "Five current runtime files are not yet fully recovered.",
+    "The private source account and rule mapping is replaced by a synthetic example.",
+    "The recovered package metadata says 0.2.0 while the source VERSION constant says 0.2.1."
+  ]
+}

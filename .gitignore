@@ -1,0 +1,35 @@
+# Credentials and local financial configuration
+.env
+.env.*
+!.env.example
+*.private.*
+mapping.json
+config.local.*
+credentials*.json
+
+# Provider state, local recovery material, and generated files
+.vercel/
+recovery/
+downloads/
+state/
+logs/
+*.log
+*.zip
+
+# Dependencies and test/build output
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage/
+dist/
+build/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

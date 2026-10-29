@@ -1,0 +1,23 @@
+{
+  "archive_only": true,
+  "current_service_version": false,
+  "historical_version": "0.1.0-observer",
+  "source_archive_filename": "finance_coordinator_deployed_source.zip",
+  "source_archive_sha256": "4c67b3cf96b75124fef9c0d2418f1738532e8e5f2e778cc3028c60430e10600c",
+  "source_archive_date": "2026-10-29",
+  "source_files_sha256": {
+    "app.py": "dc12e6e261aa938a8e7993be08b67d52b2a1a76f2f18d624f9f55cf184d02078",
+    "requirements.txt": "d2344076593c14357a86869580f2ff4930051813c887c6c3d5248ff81b3ffe33",
+    "pyproject.toml": "6fac7a447feac963518b3608a316c92411a2ae5fdc87d697841e9f7e4624e416",
+    "vercel.json": "54970ca32ce54fe6e7bd8c939340a83cdb3f54e00d79a63660e4287670f29621",
+    "tests/test_receiver.py": "d8e09cdf7c626e9daf1fb6433bf7e3f4cebd04be985c98bdf002be9874ed025a"
+  },
+  "sanitization": [
+    "Personal references and original setup notes omitted or replaced.",
+    "Real account/rule UUIDs replaced with synthetic example identifiers.",
+    "Original deployment manifest, account mapping and historical test-output files omitted.",
+    "No production credentials or provider identity values included."
+  ],
+  "logic_changes": "Receiver algorithm unchanged. Identity fixtures, comments and documentation were sanitized. The separate decision-core archive also changes policy/default example values and related test fixtures.",
+  "validation": "Original and sanitized suites run locally using synthetic/mocked data only."
+}

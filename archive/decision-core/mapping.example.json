@@ -1,0 +1,33 @@
+{
+  "example_only": true,
+  "mode": "PREPARATION_ONLY",
+  "live_enabled": false,
+  "timezone": "America/New_York",
+  "accounts": {
+    "income": "00000000-0000-4000-8000-000000000001",
+    "emergency": "00000000-0000-4000-8000-000000000002",
+    "emergency_routing": "00000000-0000-4000-8000-000000000003",
+    "project_savings": "00000000-0000-4000-8000-000000000004",
+    "general_spending": "00000000-0000-4000-8000-000000000005",
+    "bills": "00000000-0000-4000-8000-000000000006"
+  },
+  "rules": {
+    "funding": "00000000-0000-4000-8000-000000000101",
+    "emergency_payout": "00000000-0000-4000-8000-000000000102",
+    "emergency_excess": "00000000-0000-4000-8000-000000000103",
+    "general_spending": "00000000-0000-4000-8000-000000000104"
+  },
+  "targets_in_cents": {
+    "emergency": 1500000,
+    "general_spending": 250000
+  },
+  "percentages_of_original_income": {
+    "emergency": 10,
+    "project_savings": 3
+  },
+  "go_live_watermark": null,
+  "protected_income_policy": null,
+  "bank_refund_matching_validated": false,
+  "live_settlement_test_completed": false,
+  "retirement_and_brokerage_execution_enabled": false
+}

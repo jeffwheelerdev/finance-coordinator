@@ -1,0 +1,22 @@
+{
+  "archive_only": true,
+  "current_service_version": false,
+  "historical_version": "unversioned pre-deployment decision core",
+  "source_archive_filename": "finance_automation_setup.zip",
+  "source_archive_sha256": "51e9c4ba4d364dc1614b32b1ef5eff747fa3a15fcb06a9ab9a08a12055b80da8",
+  "source_archive_date": "2026-10-29",
+  "source_files_sha256": {
+    "coordinator_core.py": "1df71b563f8a60d66e75102d7be6d95d9183fee3ad993e6ea2074cacf8af832f",
+    "state_schema.sql": "74ea62ea5b57b3de6c15febb87143e967f650c350cf8b6e33ac4ea79592de4c7",
+    "tests/test_coordinator.py": "6f388c875c466d83acc85ea15e9065e58ed34bdb590aa1acc0b12a1bbdc607e5"
+  },
+  "sanitization": [
+    "Personal references and original setup notes omitted or replaced.",
+    "Real account/rule UUIDs replaced with synthetic example identifiers.",
+    "Original deployment manifest, account mapping and historical test-output files omitted.",
+    "No production credentials or provider identity values included.",
+    "Personal policy values replaced with a distinctly synthetic example: 250000-cent spending target, 1500000-cent emergency target, 10% emergency and 3% project allocations; associated fixture amounts and assertions adjusted."
+  ],
+  "logic_changes": "Execution algorithm unchanged. Example policy/default values, fixture amounts and expected test results were altered, in addition to sanitizing identity fixtures, comments and documentation.",
+  "validation": "Original and sanitized suites run locally using synthetic/mocked data only."
+}
