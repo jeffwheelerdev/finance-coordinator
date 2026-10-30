@@ -2,7 +2,7 @@
 
 ## Version boundary
 
-The root application is the newly authored 0.4.0 Node.js coordinator. Sequence
+The root application is the newly authored 0.5.0 Node.js coordinator. Sequence
 owns account connections, rules, and transfer execution; the coordinator reads
 evidence and, when explicitly activated, submits constrained Income→recipient
 transfers. Vercel Functions runs it and a private Blob ledger preserves its
@@ -90,6 +90,7 @@ target           = monthly budget × reserve months
 Bills floor      = max(current calculated target, this cycle's prior Bills target)
 Bills shortfall  = max(0, Bills floor − Bills cash)
 protected Income = explicit Income reserve + Bills shortfall
+                   + eligible unpaid current-month Roth installment
 usable Income    = max(0, Income cash − protected Income)
 target gap       = max(0, target − destination cash)
 transfer         = min(target gap, usable Income), only if Bills shortfall is zero
@@ -106,6 +107,53 @@ amount, all lower recipients are permanently skipped for that event. Later
 money or catalog changes do not revive the event. A new refund can create a
 new opportunity. There is no borrowing, reverse withdrawal, or transfer solely
 because spending has reduced a balance.
+
+## Independent monthly Roth workflow
+
+The `roth-month` event kind shares the same Blob lease, active-intent pointer,
+immutable request mechanism and provider adapter. A key such as
+`roth:roth-ira:2030-01` identifies one prospective monthly opportunity. It does
+not pass through refund discovery or require an empty Pod. Existing event
+records without a kind remain refund events, so historical identities and
+deduplication remain intact. Roth's permanent destination binding is separate
+from the existing cash-account binding.
+
+The monetary policy separates two verified annual ceilings: direct Roth and
+combined regular Traditional/Roth contributions. Outside contributions exclude
+all coordinator requests. Every immutable own request reserves its full amount,
+including pending, uncertain and review states. A retry excludes only its own
+reservation when testing the unchanged body. The ledger protects observed
+outside-contribution floors and policy timestamps against rollback. Market
+balances, earnings and dividends never supply contribution-room evidence.
+
+The cash guard validates the exact investment destination and current-year
+deposit route. It reads the reviewed native savings definition and requires the
+latest expected 1st/15th scheduled run to have begun, including all matched-step
+commitments. Known pending native Income debits can remain unsettled, but their
+full amounts are reserved. The guard also conservatively subtracts pending
+Income credits, protects the current Bills shortfall and rejects unidentified
+Income debits. A pending Pod refund is therefore neither a prerequisite nor
+spendable promised money. Completed movements require fresh subsequent cash
+snapshots before their balances can fund another request.
+
+New unfamiliar completed Roth credits after the verified outside-contribution
+baseline require reconciliation. Known own credits must match their immutable
+provider identity and requested amount. This prevents a new external deposit
+from being ignored merely because an earlier exclusivity attestation exists.
+
+An insufficient full installment remains waiting during its current month.
+Unlike a cash-account refund opportunity, that state can retry after new cash
+arrives. Older unsubmitted months expire; they are not added to later payments.
+The engine checks the local month again immediately before the provider POST.
+Cross-year uncertain or late-settling contributions retain their identities and
+require tax-year reconciliation; they are never relabeled as the new year's
+contribution. See [Roth policy](roth-policy.md) for exact cents and annual fields.
+
+Policy-source or eligibility problems affect Roth separately. Existing Bills
+and General work can continue under their own evidence requirements, while an
+already recorded unpaid Roth obligation remains protected from lower-priority
+cash funding. A shared unresolved provider request, lost storage lease or ledger
+integrity problem still prevents competing financial submissions.
 
 ## Forecast and private source freshness
 
@@ -192,7 +240,7 @@ authorize overlapping production projects.
 
 ## Wakeups and bounded work
 
-The daily cron is scheduled at 13:00 UTC. On Vercel Hobby it can run within that
+The daily cron is scheduled at 15:00 UTC. On Vercel Hobby it can run within that
 hour; it is not a precise-minute or settlement guarantee. Optional signed
 webhooks can wake the same reconciler after durable receipt. Payloads supply
 notifications, not trusted transfer evidence. Registration and delivery must

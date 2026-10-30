@@ -1,6 +1,6 @@
 # Deployment and deliberate activation
 
-Version 0.4.0 is configured for inactive operation. These steps describe the
+Version 0.5.0 is configured for inactive operation. These steps describe the
 operating requirements; they are not a record that deployment, webhook
 registration, or financial activation has occurred. Verification uses offline
 tests and provider reads. Do not make a live transfer to test this setup.
@@ -56,9 +56,17 @@ No additional native Sequence top-up rule is required for Bills or General
 Spending. The coordinator submits exact transfers after the same verified Pod
 refund. Do not activate upstream rules as part of an inactive deployment check.
 
+Roth also uses the coordinator, not a separate native fixed-dollar rule. Set
+its private account binding and annual policy, verify the current-year Fidelity
+deposit route, and pin the reviewed savings-rule definition. Confirm the
+current tax year's personal Roth/combined IRA allowance, regular contributions
+made outside this coordinator, age-based catch-up eligibility, and absence of
+another recurring contribution schedule. The existing account balance cannot
+replace those records. A new calendar year needs its own verified annual facts.
+
 Review the existing key's exact `MANUAL_TRANSFER` permission for
 both Income→Bills and Income→General Spending, their amount caps if present,
-and each future recipient pair. A cap must accommodate the intended request or the provider will reject
+the separately configured Income→Roth pair, and each future recipient pair. A cap must accommodate the intended request or the provider will reject
 it. Unattended operation requires the permission's approval requirement to be
 disabled. A read-only preflight cannot introspect and certify these settings.
 If approval is required, an accepted transfer waits for approval; the
@@ -73,6 +81,7 @@ secret privately; do not place it in URLs, screenshots, or committed commands.
 | `GET /api/health` | Public basic configuration and mode status. |
 | `GET /api/status` | Effective private policy summary, latest run, and unresolved-state indicators. |
 | `GET /api/bills` | Aggregate twelve-month Bills forecast, dynamic cap and monitor metadata; no private bill rows. |
+| `GET /api/roth` | Private aggregate annual/monthly contribution plan, reserved and settled amounts, and unresolved eligibility requirements. |
 | `GET /api/preflight` | Read-only rule, account, upstream-history, and ledger checks. No provider or ledger writes. |
 | `GET /api/plan` | Read-only evidence and funding plan; does not claim or consume an event. |
 | `GET` or bodyless `POST /api/reconcile` | Operational reconciliation; may update the ledger and submit a transfer when live. |
@@ -111,6 +120,14 @@ unfunded Bills attempt skips lower recipients for that refund cycle.
 A payout without a refund does not trigger funding. A partial fill uses that
 event once; normal spending does not cause continuous replenishment.
 
+Roth has an independent monthly opportunity. The first eligible slot is a
+first-of-month check at 15:00 UTC on or after the recorded activation cutoff.
+Activation after that month's slot does not authorize historical installments.
+The contribution can proceed after the scheduled native savings commitments
+are fully known, without waiting for the routing Pod to empty or refund Income.
+It protects the Bills gap and known pending savings debits. Cash shortages can
+retry within the same month; they do not increase later monthly installments.
+
 Once recorded by live operation, the cutoff and ledger history are permanent.
 Never reset state, change the ledger prefix, or move the cutoff forward to
 remove failures or replay work. Source/rule identity changes require a reviewed
@@ -121,16 +138,27 @@ inactive ledger without financial events transitions without resetting state.
 
 ## 4. Scheduling and optional webhooks
 
-The configured cron calls `/api/reconcile` daily at 13:00 UTC. Vercel provides
+The configured cron calls `/api/reconcile` daily at 15:00 UTC. Vercel provides
 the `CRON_SECRET` bearer header. Hobby schedules may run at any point within the
 scheduled hour. Provider settlement and bank-balance refresh can add further
 delay. See [cron authorization](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
 and [cron timing](https://vercel.com/docs/cron-jobs/usage-and-pricing).
 
+The first-day Roth check occurs at 11:00 a.m. in New York during daylight time
+and 10:00 a.m. during standard time. Its 15:00 UTC window follows the currently
+reviewed native savings rule at 14:00 UTC. Changing that native schedule or its
+actions requires reviewing the pinned evidence before Roth can resume. The
+shared Blob lease serializes coordinator requests; it does not lock native
+Sequence rules. Roth explicitly reserves their known pending commitments.
+
 The separate Bills monitor checks Finances and updates private policy; it does
 not initiate transfers or change activation gates. Its schedule and collector
 contract are documented in [Bills monitoring](bills-monitor.md). Catalog or cap
 changes alone do not create a funding event.
+
+The separate IRS limit monitor checks official publications and can update the
+next year's statutory limits. It never submits contributions, enables rules,
+changes personal evidence, or turns on financial execution. See [Roth monitoring](roth-monitor.md).
 
 Webhooks are optional and are not registered by this repository. Register the
 actual canonical `/api/webhook` endpoint in Sequence and store its issued

@@ -17,6 +17,8 @@ storage.
 | `GENERAL_SPENDING_MONTHLY_BUDGET` | Required nonnegative dollar string, with at most two decimals. No built-in budget default. |
 | `GENERAL_SPENDING_RESERVE_MONTHS` | Required positive integer. Multiplies the monthly budget to obtain the balance target. |
 | `GLOBAL_CONFIG` | Private Global Config connection string with read access to `bills_catalog` and `bills_monitor`. Required for current Bills policy; never put it in a URL shared with a user or in source control. |
+| `ROTH_ENABLED` | Exactly `true` or `false`, default `false`. Configures the independent monthly Roth feature; it does not bypass the global transfer gates. |
+| `ROTH_ACCOUNT_ID` | Exact private investment-account UUID, required when Roth is configured. Must differ from every cash account and refund recipient. |
 | `INCOME_RESERVE` | Required nonnegative dollar string. Set an explicit value, including `0` when intended. |
 | `MAX_BALANCE_AGE_HOURS` | Positive number at most `26`; defaults to `26`. Must resolve to whole milliseconds. |
 | `FINANCE_ACCOUNT_IDS_JSON` | JSON object with exactly `income`, `pod`, `general`, and `bills`; four distinct provider UUIDs. |
@@ -76,6 +78,32 @@ catalog, monitor and update contract.
 The fixed private Blob object `finance-v3/ledger.json` remains separate from
 Global Config. The latter is not an execution lease or a substitute for
 conditional ledger writes.
+
+## Roth policy
+
+Roth is deliberately absent from `FINANCE_ALLOCATIONS_JSON`: it has an annual
+contribution allowance, not a market-balance target. The additional private
+Global Config item `roth_policy` is an envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "policy": "See the Roth policy schema; this field is an object",
+  "evidence": "See the route and upstream proof schema; this field is an object"
+}
+```
+
+The string values above are documentation placeholders, not valid runtime
+configuration. [Roth policy](roth-policy.md) describes the required monetary
+records. [Roth monitoring](roth-monitor.md) describes the separate evidence
+envelope and safe update process. The same private read connection supplies
+this key. Invalid or unavailable Roth data is reported separately and does not
+disable the established Bills and General policy.
+
+Keep Roth's source/destination and policy ID permanent after live registration.
+An annual-limit edit must not change account identity, activation, the ledger,
+or an already submitted request. Status reports aggregate contribution amounts
+and blockers without exposing provider identifiers or evidence references.
 
 ## Change a budget
 

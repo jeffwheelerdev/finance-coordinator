@@ -1,7 +1,7 @@
 # Finance Coordinator
 
-A Sequence coordinator for funding spending accounts from Income after a
-verified Pod refund. The current **0.4.0 implementation is newly authored**
+A Sequence coordinator for refund-triggered spending-account funding and
+independent monthly Roth IRA contributions from Income. The current **0.5.0 implementation is newly authored**
 Node.js code for Vercel. Its source is complete; deployment and financial
 activation require the separate checks in [activation](docs/activation.md).
 Source availability does not establish that a deployment is active.
@@ -58,6 +58,41 @@ catalog edit does not revive them. A higher Bills target after a completed
 Bills attempt also prevents lower recipients from using money needed by Bills;
 it does not create a second Bills request for the same event.
 
+## Monthly Roth contributions
+
+Roth has a separate calendar schedule. On the first day of each New York month,
+the coordinator can initiate one current-year contribution equal to one twelfth
+of the verified annual Roth allowance. A $7,500 annual allowance produces twelve
+$625 installments. Integer-cent installment differences distribute any remainder
+over the year without exceeding the annual amount.
+
+This flow does not require a Pod refund or an empty Pod. The daily check runs at
+15:00 UTC, after the existing native savings schedule at 14:00 UTC. It verifies
+that the scheduled savings run has started and all commitments are known, then
+reserves pending native debits, the Bills shortfall and the explicit Income
+reserve. It may fund Roth while known Emergency/Project transfers remain pending.
+Missing, changed or ambiguous upstream evidence delays the Roth contribution.
+
+The contribution policy uses statutory IRS limits, verified personal eligibility,
+and tax-year contribution records across all relevant IRAs. Market value and
+dividends are not contribution history. Own settled, pending and uncertain
+requests share one durable annual allowance and the existing execution lease.
+Another recurring contribution schedule must be reconciled before this
+coordinator can become the sole ongoing contributor.
+
+A scheduled monitor can add newly published IRS limits to private Global Config
+without redeployment. New statutory limits do not establish personal eligibility
+or contribution history for a new year. Missing annual facts pause Roth while
+the cash-account flows retain their own rules. The prepared feature remains
+subject to the global inactive gates and deliberate activation cutoff.
+
+Insufficient cash leaves the installment waiting for a later check in the same
+month. The coordinator does not make a partial contribution simply because
+cash is short, automatically catch up missed months, or replay a December
+contribution in January. Starting partway through a year therefore does not
+guarantee the annual maximum will be reached. See [Roth policy](docs/roth-policy.md)
+and [annual limit monitoring](docs/roth-monitor.md).
+
 ## Private Bills policy and monitoring
 
 The application reads `bills_catalog` and `bills_monitor` together from private
@@ -85,9 +120,11 @@ providers; there is no live transfer test.
 | --- | --- |
 | [Configuration](docs/configuration.md) | Private variables, dynamic Bills policy, arbitrary budgets, and future recipients. |
 | [Bills monitoring](docs/bills-monitor.md) | Catalog evidence, automatic updates, freshness, and operational limits. |
+| [Roth policy](docs/roth-policy.md) | Independent monthly contributions, annual room and personal evidence. |
+| [Roth limit monitoring](docs/roth-monitor.md) | Official IRS updates, private policy changes and rollover behavior. |
 | [Architecture](docs/architecture.md) | Evidence, reserves, durable state, retries, and limits. |
 | [Activation](docs/activation.md) | Inactive setup, read checks, deliberate activation, and operations. |
-| [`lib/`](lib/) and [`api/`](api/) | Current 0.4.0 implementation. |
+| [`lib/`](lib/) and [`api/`](api/) | Current 0.5.0 implementation. |
 | [`test/`](test/) | Offline tests for the current implementation. |
 | [`archive/`](archive/) | Historical Python decision core and read-only observer. |
 | [`snapshots/deployment-0.2.1/`](snapshots/deployment-0.2.1/) | Incomplete original runtime export, with sanitized configuration. |

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { reconcile } from '../lib/engine.mjs';
+import { parseRothPolicy } from '../lib/roth.mjs';
+import { nativeRuleFingerprint } from '../lib/roth-evidence.mjs';
 
 // Synthetic fixtures only. No production identifiers, balances or credentials.
 export const ID = (number) => `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`;
@@ -211,5 +213,61 @@ export function scenario(overrides = {}) {
   const s = { config, clock, store, client, nextUuid: () => ID(identity++) };
   s.run = (options = {}) => reconcile({ config: s.config, client: s.client, store: s.store,
     now: () => s.clock.value, uuid: s.nextUuid, ...options });
+  return s;
+}
+
+/** Synthetic tax-year data, deliberately unrelated to future IRS amounts. */
+export function makeRothPolicy(year = 2030, { annualCents = 750000, outsideTraditionalCents = 0, outsideRothCents = 0 } = {}) {
+  const verifiedAt = `${year - 1}-12-01T12:00:00.000Z`, reference = 'Synthetic reviewed test evidence';
+  return parseRothPolicy({ schemaVersion: 1, id: 'roth-ira', timeZone: 'America/New_York', updatedAt: `${year - 1}-12-02T12:00:00.000Z`,
+    statutoryLimits: [{ year, baseLimitCents: annualCents, catchUpLimitCents: 0, verifiedAt,
+      sourceUrls: ['https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-ira-contribution-limits'] }],
+    years: [{ year, catchUpEligible: false,
+      eligibility: { status: 'verified', annualRothLimitCents: annualCents, annualCombinedLimitCents: annualCents, verifiedAt, reference },
+      outsideContributions: { status: 'verified', traditionalCents: outsideTraditionalCents, rothCents: outsideRothCents, verifiedAt, reference },
+      exclusiveCoordinator: { confirmed: true, confirmedAt: verifiedAt, reference },
+      otherSchedule: { status: 'none', verifiedAt, reference } }],
+  });
+}
+
+export function rothScenario(overrides = {}, { nativePending = true, includeRefund = false } = {}) {
+  const s = scenario({ roth: { enabled: true, accountId: ID(30) }, ...overrides });
+  s.rothPolicy = makeRothPolicy();
+  if (!includeRefund) { s.client.transfers.clear(); s.client.executions.clear(); }
+  const rule = { id: s.config.rules.funding, status: 'ENABLED', deletedAt: null,
+    trigger: { type: 'SCHEDULED', scheduleType: 'BI_WEEKLY', startDate: '2030-01-01T14:00:00.000Z', accountId: s.config.accounts.income },
+    steps: [{ actions: [
+      { type: 'PERCENTAGE', source: { id: s.config.accounts.income, type: 'EXTERNAL_ACCOUNT' },
+        destination: { id: s.config.accounts.pod, type: 'POD' }, groupIndex: 0, percentageValue: 10,
+        percentageTarget: 'SOURCE_ACCOUNT', upToEnabled: false, limit: null, isDirectDeposit: false },
+      { type: 'PERCENTAGE', source: { id: s.config.accounts.income, type: 'EXTERNAL_ACCOUNT' },
+        destination: { id: ID(31), type: 'EXTERNAL_ACCOUNT' }, groupIndex: 0, percentageValue: 2.5,
+        percentageTarget: 'SOURCE_ACCOUNT', upToEnabled: false, limit: null, isDirectDeposit: false },
+    ] }] };
+  s.client.rules.set(rule.id, rule);
+  s.rothEvidence = { schemaVersion: 1, updatedAt: '2029-12-02T12:00:00.000Z',
+    route: { status: 'verified', sourceAccountId: s.config.accounts.income, destinationAccountId: s.config.roth.accountId,
+      custodian: 'fidelity', contributionYear: 'current_calendar_year', verifiedAt: '2029-12-01T12:00:00.000Z', reference: 'Synthetic ACH route' },
+    upstream: { status: 'verified', ruleId: rule.id, definitionHash: nativeRuleFingerprint(rule),
+      verifiedAt: '2029-12-01T12:00:00.000Z', reference: 'Synthetic native cash commitments' } };
+  s.client.accounts.set(s.config.roth.accountId, { id: s.config.roth.accountId, type: 'EXTERNAL_ACCOUNT', externalAccountType: 'INVESTMENT',
+    institutionName: 'Fidelity', deletedAt: null, canBeSource: false, canBeDestination: true, balance: null });
+  s.addNativeCycle = ({ at = '2030-01-01T14:00:00.000Z', pending = nativePending, executionId = ID(401) } = {}) => {
+    const run = { id: executionId, ruleId: rule.id, status: pending ? 'IN_PROGRESS' : 'EXECUTED', executionMode: 'LIVE', createdAt: at,
+      triggerDetails: { type: 'SCHEDULED' }, stepIndexMatched: 0, transferIds: [ID(402), ID(403)],
+      transfersAttempted: 2, transfersCompleted: pending ? 0 : 2, transfersPending: pending ? 2 : 0,
+      transfersFailed: 0, conditionsNotMet: false, nextAttemptAt: null, errorMessage: null };
+    // Replace synthetic cycle rows rather than accumulating mismatched fixture IDs.
+    for (const [id, old] of s.client.executions) if (old.ruleId === rule.id) s.client.executions.delete(id);
+    s.client.executions.set(executionId, run);
+    rule.steps[0].actions.forEach((action, index) => s.client.transfers.set(run.transferIds[index], transferRecord({
+      id: run.transferIds[index], amountInCents: index === 0 ? 50000 : 12500, ruleId: rule.id, ruleExecutionId: executionId,
+      source: { ...action.source, isDeleted: false }, destination: { ...action.destination, isDeleted: false },
+      status: pending ? 'PENDING' : 'COMPLETE', createdAt: at, completedAt: pending ? null : asISO(Date.parse(at) + 60000),
+    })));
+  };
+  s.addNativeCycle();
+  const run = s.run;
+  s.run = options => run({ rothPolicy: s.rothPolicy, rothEvidence: s.rothEvidence, ...options });
   return s;
 }

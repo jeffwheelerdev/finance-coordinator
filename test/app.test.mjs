@@ -8,6 +8,7 @@ import { forecastBills } from '../lib/bills.mjs';
 import { verifiedWebhook, recordWebhook } from '../lib/webhook.mjs';
 import { initialState } from '../lib/engine.mjs';
 import { FakeStore, FakeSequence, ID, TEST_NOW, asISO } from './fixtures.mjs';
+import { rothEnvelopeFixture } from './roth-policy-fixture.mjs';
 
 const fixtureEnv = Object.fromEntries(readFileSync(new URL('../.env.example', import.meta.url), 'utf8').split('\n')
   .filter((line) => line && !line.startsWith('#')).map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
@@ -18,13 +19,18 @@ function setup(overrides = {}) {
   const env = { ...fixtureEnv, SEQUENCE_API_KEY: 'synthetic-provider-key', BLOB_READ_WRITE_TOKEN: 'synthetic-blob-token', CRON_SECRET: cron, SEQUENCE_WEBHOOK_SECRET: secret,
     GLOBAL_CONFIG: 'synthetic-private-policy-connection', ...overrides };
   const policy = policyFixture();
+  const rothSource = { roth_policy: rothEnvelopeFixture() };
+  rothSource.roth_policy.policy.updatedAt = asISO(TEST_NOW - 60_000);
+  rothSource.roth_policy.policy.statutoryLimits[0].year = 2030;
+  rothSource.roth_policy.policy.years[0].year = 2030;
   const config = withCalculatedBillsTarget(loadConfig(env), forecastBills(policy.bills_catalog, { now: TEST_NOW })), store = new FakeStore(), clock = { value: TEST_NOW, advance(ms) { this.value += ms; } };
   const client = new FakeSequence(config, clock), messages = [], pending = [];
   let policyReads = 0;
   const app = createApp({ env, now: () => clock.value, clientFactory: () => client, storeFactory: () => store,
     billsReader: async () => { policyReads += 1; if (policy.failure) throw policy.failure; return structuredClone(policy); },
+    rothReader: async () => { if (rothSource.failure) throw rothSource.failure; return structuredClone(rothSource); },
     background: (promise) => pending.push(promise), log: { error: (message) => messages.push(message) } });
-  return { app, env, config, store, client, clock, messages, pending, policy, policyReads: () => policyReads };
+  return { app, env, config, store, client, clock, messages, pending, policy, rothSource, policyReads: () => policyReads };
 }
 
 function policyFixture() {
@@ -59,7 +65,7 @@ test('health is safe without auth and never accesses provider/storage', async ()
 
 test('all administration routes reject missing or incorrect authorization', async () => {
   const s = setup();
-  for (const path of ['status', 'preflight', 'plan', 'bills', 'reconcile']) {
+  for (const path of ['status', 'preflight', 'plan', 'bills', 'roth', 'reconcile']) {
     const response = await s.app.fetch(new Request(`https://example.test/api/${path}`, { headers: { authorization: `Bearer ${cron}wrong` } }));
     assert.equal(response.status, 401);
   }
@@ -254,4 +260,42 @@ test('bill routes reject writes and rewritten routes preserve authentication', a
   assert.equal(response.status, 405);
   assert.equal((await s.app.fetch(new Request('https://example.test/api/index?route=bills'))).status, 401);
   assert.equal(s.policyReads(), 0); assert.equal(s.client.calls.length, 0);
+});
+
+test('Roth endpoint shows aggregate unknown eligibility without exposing private bindings or writes', async () => {
+  const s = setup({ ROTH_ENABLED: 'true', ROTH_ACCOUNT_ID: ID(60) });
+  const response = await s.app.fetch(new Request('https://example.test/api/roth', { headers: { authorization: `Bearer ${cron}` } }));
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.monthlyAmountCents, 62500);
+  assert.equal(body.eligible, false);
+  assert.ok(body.blockers.includes('ROTH_PERSONAL_ELIGIBILITY_UNVERIFIED'));
+  assert.equal(s.client.creates.length, 0);
+  assert.equal(s.store.writes.length, 0);
+  for (const privateValue of [ID(60), ...Object.values(s.config.accounts), s.env.SEQUENCE_API_KEY, cron]) {
+    assert.equal(JSON.stringify(body).includes(privateValue), false);
+  }
+});
+
+test('a Roth source outage does not suppress the Bills forecast or corrupt its policy', async () => {
+  const s = setup({ ROTH_ENABLED: 'true', ROTH_ACCOUNT_ID: ID(60) });
+  s.rothSource.failure = new Error('private-roth-source-secret');
+  const headers = { authorization: `Bearer ${cron}` };
+  const response = await s.app.fetch(new Request('https://example.test/api/bills', { headers }));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).targetCents, 50000);
+  const roth = await s.app.fetch(new Request('https://example.test/api/roth', { headers }));
+  const body = await roth.json();
+  assert.equal(roth.status, 200);
+  assert.ok(body.blockers.includes('ROTH_SOURCE_UNAVAILABLE'));
+  assert.equal(JSON.stringify(body).includes('private-roth-source'), false);
+  assert.equal(s.client.creates.length, 0);
+});
+
+test('Roth routes reject mutations and rewritten routes preserve authentication', async () => {
+  const s = setup();
+  assert.equal((await s.app.fetch(new Request('https://example.test/api/roth', { method: 'POST', headers: { authorization: `Bearer ${cron}` } }))).status, 405);
+  assert.equal((await s.app.fetch(new Request('https://example.test/api/index?route=roth'))).status, 401);
+  assert.equal(s.policyReads(), 0);
+  assert.equal(s.client.calls.length, 0);
 });

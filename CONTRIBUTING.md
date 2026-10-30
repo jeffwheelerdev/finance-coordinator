@@ -23,7 +23,7 @@ using real deployment configuration.
 
 ## Source and privacy boundaries
 
-- Keep the new 0.3.0 runtime distinct from historical material in `archive/`
+- Keep the current runtime distinct from historical material in `archive/`
   and the incomplete 0.2.1 snapshot.
 - Preserve provenance. A reimplementation or partial export is not recovered
   original source.

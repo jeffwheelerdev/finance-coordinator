@@ -47,7 +47,7 @@ test('required configuration has no financial or account defaults', () => {
 
 test('target derives from configurable budget and reserve months, without a fixed target', () => {
   const config = loadConfig(env());
-  assert.equal(VERSION, '0.4.0');
+  assert.equal(VERSION, '0.5.0');
   assert.equal(general(config).monthlyBudgetCents, 123456);
   assert.equal(general(config).targetCents, 370368);
   assert.equal(config.allocations[0].id, 'bills');
@@ -220,4 +220,29 @@ test('runtime summaries expose aggregate Bills policy and omit private catalog r
   assert.equal(summary.calculatedBillsTarget.targetCents, 500000);
   assert.equal(JSON.stringify(summary).includes('private-test-payee'), false);
   assert.equal(JSON.stringify(result).includes('private-test-payee'), false);
+});
+
+test('Roth is an independently configured investment destination, never a refund target', () => {
+  const baseline = loadConfig(env());
+  assert.deepEqual(baseline.roth, { enabled: false, accountId: null });
+  const configured = loadConfig(env({ ROTH_ENABLED: 'true', ROTH_ACCOUNT_ID: uuid(30) }));
+  assert.deepEqual(configured.roth, { enabled: true, accountId: uuid(30) });
+  assert.equal(configured.allocations.length, baseline.allocations.length);
+  assert.equal(configured.liveEnabled, false);
+  assert.notEqual(configured.configHash, baseline.configHash);
+  const summary = summarizeConfig(configured);
+  assert.equal(summary.roth.schedule, 'first_of_month');
+  assert.equal(summary.roth.checkHourUTC, 15);
+  assert.equal(JSON.stringify(summary).includes(uuid(30)), false);
+});
+
+test('Roth rejects missing, ambiguous, and overlapping account bindings', () => {
+  for (const value of ['TRUE', '', true, 1]) rejects(() => loadConfig(env({ ROTH_ENABLED: value })), 'INVALID_BOOLEAN');
+  rejects(() => loadConfig(env({ ROTH_ENABLED: 'true' })), 'MISSING_ROTH_ACCOUNT');
+  rejects(() => loadConfig(env({ ROTH_ACCOUNT_ID: 'Roth IRA' })), 'INVALID_UUID');
+  for (const value of Object.values(accounts)) {
+    rejects(() => loadConfig(env({ ROTH_ENABLED: 'true', ROTH_ACCOUNT_ID: value })), 'INVALID_ROTH_DESTINATION');
+  }
+  rejects(() => loadConfig(env({ ROTH_ENABLED: 'true', ROTH_ACCOUNT_ID: uuid(20),
+    FINANCE_ALLOCATIONS_JSON: JSON.stringify([extra()]) })), 'INVALID_ROTH_DESTINATION');
 });

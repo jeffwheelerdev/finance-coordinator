@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reconcile, preview, initialState, validateState, LEASE_MS } from '../lib/engine.mjs';
+import { reconcile, preview, initialState, validateState, LEASE_MS, rothAnnualReservations, summarizeRothState } from '../lib/engine.mjs';
 import { validTime } from '../lib/evidence.mjs';
 import { SequenceError } from '../lib/sequence.mjs';
 import { withCalculatedBillsTarget } from '../lib/config.mjs';
 import { forecastBills } from '../lib/bills.mjs';
-import { ID, TEST_NOW, asISO, makeConfig, cashAccount, transferRecord, scenario, FakeStore, StoreConflict } from './fixtures.mjs';
+import { ID, TEST_NOW, asISO, makeConfig, cashAccount, transferRecord, scenario, rothScenario, makeRothPolicy, FakeStore, StoreConflict } from './fixtures.mjs';
 
 const event = (s) => Object.values(s.store.value.events)[0];
 const child = (s) => event(s).children['general-spending'];
@@ -997,4 +997,336 @@ test('financial-evidence timestamps require valid calendar dates and explicit ti
   for (const timestamp of ['2029-02-30T12:00:00Z', '2030-01-02T11:30:00', '2029-04-31T12:00:00Z']) {
     assert.throws(() => validTime(timestamp, TEST_NOW), 'Malformed provider timestamp must not qualify');
   }
+});
+
+const rothEvent = s => Object.values(s.store.value?.events ?? {}).find(item => item.kind === 'roth-month' && item.status === 'OPEN') ??
+  Object.values(s.store.value?.events ?? {}).filter(item => item.kind === 'roth-month').at(-1);
+const rothChild = s => rothEvent(s)?.children['roth-ira'];
+function rothAt(s, at, { nativePending = true } = {}) {
+  s.clock.value = Date.parse(at);
+  s.config = makeConfig({ ...s.config, calculatedBillsTarget: { ...s.config.calculatedBillsTarget,
+    effectiveDate: at.slice(0, 10), year: Number(at.slice(0, 4)) } });
+  const date = new Date(s.clock.value);
+  s.addNativeCycle({ at: asISO(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() >= 15 ? 15 : 1, 14)), pending: nativePending });
+  s.client.refreshCash({ at: asISO(s.clock.value - 1000) });
+}
+
+test('Roth is independent of Pod refund and may submit alongside known pending native savings commitments', async () => {
+  const s = rothScenario();
+  s.client.accounts.get(s.config.accounts.pod).balance.balanceInCents = 50000;
+  s.client.onCreate = intent => {
+    assert.equal(rothChild(s).status, 'SUBMITTING');
+    assert.deepEqual(rothChild(s).request, intent.request);
+    assert.equal(rothAnnualReservations(s.store.value, 2030).reservedCents, 62500);
+    assert.equal(s.store.value.active.allocationId, 'roth-ira');
+    return s.client.acceptIntent(intent);
+  };
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  assert.equal(s.client.creates[0].request.amountInCents, 62500);
+  assert.equal(s.client.creates[0].request.destinationAccountId, s.config.roth.accountId);
+  assert.equal(rothChild(s).plan.pendingNativeCents, 62500);
+  assert.equal(s.client.calls.some(call => call.method === 'getAccount' && call.id === s.config.accounts.pod), false);
+  assert.equal(s.client.calls.some(call => call.method === 'getRuleExecution' && call.ruleId === s.config.rules.payout), false);
+});
+
+test('one monthly Roth intent settles once, remains annually reserved, and cannot replay from another refund', async () => {
+  const s = rothScenario();
+  await s.run();
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  s.clock.advance(1000); s.client.settle(topupId(s));
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_SETTLED');
+  assert.deepEqual(rothAnnualReservations(s.store.value, 2030), { reservedCents: 62500, settledCents: 62500, unresolvedCents: 0 });
+  assert.equal((await s.run()).code, 'ROTH_MONTH_ALREADY_HANDLED');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('insufficient cash retains a full unpaid monthly Roth obligation and retries after funding', async () => {
+  const s = rothScenario();
+  s.client.refreshCash({ income: 100000 });
+  assert.equal((await s.run()).code, 'CASH_INSUFFICIENT');
+  assert.equal(rothChild(s).status, 'WAITING');
+  assert.equal(rothChild(s).plannedAmountInCents, 62500);
+  assert.equal(rothAnnualReservations(s.store.value, 2030).reservedCents, 0);
+  noWrites(s);
+  s.clock.advance(3600000); s.client.refreshCash({ income: 200000 });
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  assert.equal(s.client.creates[0].request.amountInCents, 62500);
+});
+
+test('Bills receives its deficit before an unaffordable Roth installment, while General preserves the unpaid Roth obligation', async () => {
+  const s = rothScenario({}, { nativePending: false, includeRefund: true });
+  s.client.refreshCash({ income: 90000, bills: 0 });
+  const first = await s.run();
+  assert.equal(first.code, 'TOPUP_PENDING');
+  assert.equal(first.allocationId, 'bills');
+  assert.equal(first.roth.code, 'CASH_INSUFFICIENT');
+  assert.equal(s.client.creates[0].request.amountInCents, 50000);
+  s.clock.advance(1000); s.client.settle(topupId(s)); await s.run();
+  s.clock.advance(1000); s.client.refreshCash({ income: 40000, bills: 50000 });
+  const later = await s.run();
+  assert.equal(later.plan.additionalIncomeReserveCents, 62500);
+  assert.equal(later.plan.amountInCents, 0);
+  assert.equal(s.client.creates.length, 1);
+  assert.equal(rothChild(s).status, 'WAITING');
+});
+
+test('Roth route failure does not disable refunds and its planned cash stays protected during a policy outage', async () => {
+  const s = rothScenario({}, { nativePending: false, includeRefund: true });
+  s.rothEvidence.route = { status: 'unverified' };
+  s.client.refreshCash({ income: 170000 });
+  s.client.onCreate = () => { throw Object.assign(new Error('Synthetic request never arrived'), { uncertain: true }); };
+  assert.equal((await s.run()).code, 'SUBMISSION_OUTCOME_UNKNOWN');
+  assert.equal(s.client.creates[0].request.amountInCents, 97500);
+  assert.equal(rothChild(s).plannedAmountInCents, 62500);
+  s.clock.advance(61000); s.client.refreshCash({ income: 150000 });
+  const retried = await s.run({ rothPolicy: null, rothPolicyError: 'ROTH_POLICY_UNAVAILABLE' });
+  assert.equal(retried.code, 'RETRY_NO_LONGER_FITS_CURRENT_BALANCES');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('a brief policy outage at initial activation retains that month for a later retry', async () => {
+  const s = rothScenario();
+  assert.equal((await s.run({ rothPolicy: null, rothPolicyError: 'ROTH_POLICY_UNAVAILABLE' })).code, 'ROTH_POLICY_UNAVAILABLE');
+  assert.equal(s.store.value.rothBinding.firstEligibleAt, s.config.activationAt);
+  assert.deepEqual(s.store.value.events, {});
+  s.clock.advance(3600000); s.client.refreshCash();
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('the first-day Roth opportunity starts at 15:00 UTC and never before it', async () => {
+  const s = rothScenario();
+  rothAt(s, '2030-01-01T14:59:59.000Z');
+  assert.equal((await s.run()).code, 'ROTH_MONTH_NOT_DUE');
+  noWrites(s);
+  s.clock.advance(1000);
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+});
+
+test('midmonth activation and later addition of Roth are prospective, without historical catch-up', async t => {
+  for (const addedLater of [false, true]) await t.test(addedLater ? 'added to an already live coordinator' : 'new midmonth activation', async () => {
+    const s = rothScenario(addedLater ? { roth: { enabled: false, accountId: ID(30) } } : { activationAt: asISO(TEST_NOW) });
+    if (addedLater) { await s.run(); s.config = makeConfig({ ...s.config, roth: { enabled: true, accountId: ID(30) } }); }
+    assert.equal((await s.run()).code, 'ROTH_MONTH_PREDATES_ACTIVATION');
+    noWrites(s); assert.deepEqual(s.store.value.events, {});
+    rothAt(s, '2030-02-01T15:00:00.000Z');
+    assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+    assert.deepEqual(Object.keys(s.store.value.events), ['roth:roth-ira:2030-02']);
+    assert.equal(s.client.creates[0].request.amountInCents, 62500);
+  });
+});
+
+test('Roth previews, observe mode, and forced observation do not bind or consume a monthly opportunity', async t => {
+  for (const method of ['preview', 'observe', 'force']) await t.test(method, async () => {
+    const s = rothScenario(method === 'observe' ? { mode: 'observe', liveEnabled: false } : {});
+    const result = method === 'preview' ? await preview({ config: s.config, client: s.client, store: s.store,
+      now: () => s.clock.value, rothPolicy: s.rothPolicy, rothEvidence: s.rothEvidence }) : await s.run({ forceObserve: method === 'force' });
+    assert.equal(result.code, 'READ_ONLY_ROTH_PLAN');
+    assert.equal(result.plan.amountInCents, 62500);
+    assert.deepEqual(s.store.value?.events ?? {}, {});
+    assert.equal(s.store.value?.rothBinding ?? null, null);
+    if (method === 'preview') assert.equal(s.store.writes.length, 0);
+    noWrites(s);
+  });
+  const s = rothScenario(); s.client.refreshCash({ income: 100000 }); await s.run();
+  const before = structuredClone(s.store.value.events);
+  s.client.refreshCash({ income: 200000 });
+  assert.equal((await s.run({ forceObserve: true })).code, 'READ_ONLY_ROTH_PLAN');
+  assert.deepEqual(s.store.value.events, before);
+  noWrites(s);
+});
+
+test('an unsubmitted old Roth month expires and the next month contributes only its own installment', async () => {
+  const s = rothScenario(); s.client.refreshCash({ income: 100000 }); await s.run();
+  rothAt(s, '2030-02-01T15:00:00.000Z'); s.client.refreshCash({ income: 500000 });
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  const old = s.store.value.events['roth:roth-ira:2030-01'].children['roth-ira'];
+  assert.equal(old.status, 'SKIPPED'); assert.equal(old.reason, 'ROTH_MONTH_MISSED');
+  assert.equal(s.client.creates[0].request.amountInCents, 62500);
+});
+
+test('verified outside contributions and every own request limit annual Roth room without using brokerage balances', async () => {
+  const s = rothScenario();
+  s.rothPolicy = makeRothPolicy(2030, { outsideTraditionalCents: 685000 });
+  await s.run();
+  assert.equal(s.client.creates[0].request.amountInCents, 62500);
+  s.clock.advance(1000); s.client.settle(topupId(s)); await s.run();
+  rothAt(s, '2030-02-01T15:00:00.000Z');
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  assert.equal(s.client.creates[1].request.amountInCents, 2500);
+  assert.equal(rothAnnualReservations(s.store.value, 2030).reservedCents, 65000);
+});
+
+test('a new tax year requires its own reviewed personal evidence and then uses its new statutory cap', async () => {
+  const s = rothScenario(); await s.run();
+  s.clock.advance(1000); s.client.settle(topupId(s)); await s.run();
+  rothAt(s, '2031-01-01T15:00:00.000Z');
+  assert.equal((await s.run()).code, 'ROTH_STATUTORY_LIMIT_UNVERIFIED');
+  assert.equal(s.client.creates.length, 1);
+  const next = makeRothPolicy(2031, { annualCents: 780000 });
+  s.rothPolicy = next;
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  assert.equal(s.client.creates[1].request.amountInCents, 65000);
+  assert.equal(rothAnnualReservations(s.store.value, 2031).reservedCents, 65000);
+});
+
+test('outside-contribution floors cannot decrease on a newer policy revision or free additional annual room', async () => {
+  const s = rothScenario({}, { nativePending: false, includeRefund: true });
+  s.rothPolicy = makeRothPolicy(2030, { outsideTraditionalCents: 100000, outsideRothCents: 50000 });
+  s.client.refreshCash({ income: 20000 }); await s.run();
+  const next = structuredClone(s.rothPolicy);
+  next.updatedAt = asISO(s.clock.value);
+  next.years[0].outsideContributions.traditionalCents = 0;
+  s.rothPolicy = next; s.client.refreshCash({ income: 500000 });
+  const result = await s.run();
+  assert.equal(result.code, 'ROTH_OUTSIDE_CONTRIBUTIONS_ROLLBACK_BLOCKED');
+  assert.equal(s.store.value.rothContributionFloors[2030].traditionalCents, 100000);
+  noWrites(s);
+});
+
+test('Roth policy rollback, same-version edits, and destination changes are blocked independently of cash refunds', async t => {
+  for (const kind of ['rollback', 'same version', 'destination']) await t.test(kind, async () => {
+    const s = rothScenario(); s.client.refreshCash({ income: 100000 }); await s.run();
+    const next = structuredClone(s.rothPolicy);
+    let expected;
+    if (kind === 'rollback') { next.updatedAt = '2029-12-01T12:00:00.000Z'; expected = 'ROTH_POLICY_ROLLBACK_BLOCKED'; }
+    else if (kind === 'same version') { next.years[0].outsideContributions.rothCents = 1; expected = 'ROTH_POLICY_VERSION_CONFLICT'; }
+    else { s.config = makeConfig({ ...s.config, roth: { enabled: true, accountId: ID(32) } }); expected = 'ROTH_BINDING_CHANGED'; }
+    s.rothPolicy = next; s.client.refreshCash({ income: 500000 });
+    assert.equal((await s.run()).code, expected); noWrites(s);
+  });
+});
+
+test('Roth unknown outcomes retry the same request and reserve the amount only once', async () => {
+  const s = rothScenario();
+  s.client.onCreate = () => { throw Object.assign(new Error('Synthetic no response'), { uncertain: true }); };
+  assert.equal((await s.run()).code, 'SUBMISSION_OUTCOME_UNKNOWN');
+  const frozen = structuredClone(s.client.creates[0]);
+  assert.equal(rothAnnualReservations(s.store.value, 2030).reservedCents, 62500);
+  s.clock.advance(61000); s.client.onCreate = null;
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  assert.deepEqual(s.client.creates[1], frozen);
+  assert.equal(rothAnnualReservations(s.store.value, 2030).reservedCents, 62500);
+});
+
+test('an accepted but unknown Roth transfer is never inferred from amount or account matching', async () => {
+  const s = rothScenario();
+  s.client.onCreate = intent => { s.client.acceptIntent(intent); throw Object.assign(new Error('Lost response'), { uncertain: true }); };
+  await s.run(); s.clock.advance(61000);
+  assert.equal((await s.run()).code, 'ROTH_UNKNOWN_INCOME_OUTGOING');
+  assert.equal(s.client.creates.length, 1);
+  assert.equal(rothChild(s).status, 'SUBMITTING');
+});
+
+test('Roth retries respect frozen activation, shared legacy rule gates, and reduced annual room', async t => {
+  for (const kind of ['activation', 'legacy', 'annual room']) await t.test(kind, async () => {
+    const s = rothScenario();
+    s.client.onCreate = () => { throw Object.assign(new Error('Unknown request'), { uncertain: true }); };
+    await s.run(); s.clock.advance(61000);
+    let expected;
+    if (kind === 'activation') { s.config = makeConfig({ ...s.config, activationAt: asISO(TEST_NOW - 1000) }); expected = 'ACTIVATION_TIME_CHANGED'; }
+    else if (kind === 'legacy') { s.client.rules.get(s.config.rules.legacyGeneral).status = 'ENABLED'; expected = 'LEGACY_TOPUP_RULE_MUST_BE_DISABLED'; }
+    else {
+      s.rothPolicy.updatedAt = asISO(s.clock.value);
+      s.rothPolicy.years[0].outsideContributions.traditionalCents = 749000;
+      expected = 'ROTH_RETRY_NO_LONGER_WITHIN_LIMIT';
+    }
+    assert.equal((await s.run()).code, expected);
+    assert.equal(s.client.creates.length, 1);
+    assert.equal(rothAnnualReservations(s.store.value, 2030).reservedCents, 62500);
+  });
+});
+
+test('new Roth submissions enforce the existing rule gates', async t => {
+  for (const [name, status] of [['legacyGeneral', 'ENABLED'], ['funding', 'DISABLED'], ['payout', 'DISABLED']]) await t.test(name, async () => {
+    const s = rothScenario(); s.client.rules.get(s.config.rules[name]).status = status;
+    assert.equal((await s.run()).code, name === 'legacyGeneral' ? 'LEGACY_TOPUP_RULE_MUST_BE_DISABLED' : 'UPSTREAM_RULE_DISABLED');
+    noWrites(s);
+  });
+});
+
+test('an unknown Roth intent cannot replay in a later month or tax year', async t => {
+  for (const nextYear of [false, true]) await t.test(nextYear ? 'tax year rollover' : 'month rollover', async () => {
+    const s = rothScenario(); s.client.onCreate = () => { throw new Error('Unknown request'); };
+    await s.run(); rothAt(s, nextYear ? '2031-01-01T15:00:00.000Z' : '2030-02-01T15:00:00.000Z');
+    assert.equal((await s.run()).code, nextYear ? 'ROTH_TAX_YEAR_RECONCILIATION_REQUIRED' : 'ROTH_MONTH_RECONCILIATION_REQUIRED');
+    assert.equal(rothChild(s).status, 'REVIEW'); assert.equal(s.client.creates.length, 1);
+  });
+});
+
+test('a known Roth transfer that settles in a different tax year blocks Roth but releases shared cash uncertainty', async () => {
+  const s = rothScenario(); await s.run();
+  rothAt(s, '2031-01-01T15:00:00.000Z'); s.client.settle(topupId(s));
+  assert.equal((await s.run()).code, 'ROTH_TAX_YEAR_RECONCILIATION_REQUIRED');
+  assert.equal(rothChild(s).status, 'COMPLETE');
+  assert.equal(rothEvent(s).taxYearReconciliationRequired, true);
+  assert.equal(s.store.value.active, null);
+  s.rothPolicy = makeRothPolicy(2031);
+  assert.equal((await s.run()).code, 'ROTH_TAX_YEAR_RECONCILIATION_REQUIRED');
+  assert.equal(s.client.creates.length, 1);
+});
+
+test('Roth concurrent claims and failed durable intent writes never produce duplicate or unrecorded transfers', async t => {
+  await t.test('concurrent workers', async () => {
+    const s = rothScenario();
+    const results = await Promise.all([s.run(), s.run()]);
+    assert.equal(results.filter(result => result.code === 'ROTH_CONTRIBUTION_PENDING').length, 1);
+    assert.equal(s.client.creates.length, 1);
+  });
+  await t.test('failed immutable write', async () => {
+    const s = rothScenario();
+    s.store.beforeCAS = (_etag, value) => { if (value.active) throw new StoreConflict(); };
+    assert.equal((await s.run()).code, 'STORE_CONFLICT');
+    noWrites(s);
+  });
+});
+
+test('Roth status exposes aggregate eligibility and separate execution state without private identifiers', async () => {
+  const s = rothScenario({ mode: 'observe', liveEnabled: false });
+  let status = summarizeRothState({ config: s.config, state: initialState(), rothPolicy: s.rothPolicy,
+    rothEvidence: s.rothEvidence, now: s.clock.value });
+  assert.equal(status.monthlyAmountCents, 62500); assert.equal(status.eligible, true); assert.equal(status.executionEnabled, false);
+  s.rothEvidence.route = { status: 'unverified' };
+  status = summarizeRothState({ config: s.config, state: initialState(), rothPolicy: s.rothPolicy,
+    rothEvidence: s.rothEvidence, now: s.clock.value });
+  assert.equal(status.eligible, false); assert.equal(status.amountInCents, 0);
+  assert.ok(status.blockers.includes('ROTH_ROUTE_UNVERIFIED'));
+  assert.equal(JSON.stringify(status).includes(s.config.accounts.income), false);
+  assert.equal(JSON.stringify(status).includes('Synthetic ACH route'), false);
+});
+
+test('a final awaited save cannot carry a Roth POST across a tax-year boundary', async () => {
+  const s = rothScenario();
+  rothAt(s, '2030-12-31T23:59:59.000Z');
+  s.store.beforeCAS = (_etag, value) => {
+    if (value.active && value.events[value.active.eventKey].children['roth-ira']?.attempts === 1) {
+      s.clock.value = Date.parse('2031-01-01T05:00:00.000Z');
+    }
+  };
+  // This deliberately delayed persistence also exhausts the worker's lease.
+  // Its durable request remains recoverable; it is never sent in the new year.
+  assert.equal((await s.run()).code, 'LEASE_OR_RUN_EXPIRED');
+  noWrites(s);
+  s.store.beforeCAS = null;
+  assert.equal((await s.run()).code, 'ROTH_TAX_YEAR_RECONCILIATION_REQUIRED');
+  assert.equal(rothEvent(s).taxYearReconciliationRequired, true);
+  noWrites(s);
+});
+
+test('a cash proof from the previous native cycle cannot authorize a POST after the final save crosses the next funding date', async () => {
+  const s = rothScenario();
+  rothAt(s, '2030-01-14T23:59:59.000Z');
+  s.store.beforeCAS = (_etag, value) => {
+    if (value.active && value.events[value.active.eventKey].children['roth-ira']?.attempts === 1) {
+      s.clock.value = Date.parse('2030-01-15T00:00:00.000Z');
+    }
+  };
+  assert.equal((await s.run()).code, 'ROTH_NATIVE_CYCLE_CHANGED');
+  noWrites(s);
+  const key = rothChild(s).idempotencyKey;
+  s.store.beforeCAS = null;
+  rothAt(s, '2030-01-15T15:00:00.000Z');
+  assert.equal((await s.run()).code, 'ROTH_CONTRIBUTION_PENDING');
+  assert.equal(s.client.creates[0].idempotencyKey, key);
+  assert.equal(rothAnnualReservations(s.store.value, 2030).reservedCents, 62500);
 });

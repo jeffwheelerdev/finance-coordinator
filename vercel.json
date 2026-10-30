@@ -13,8 +13,9 @@
     { "source": "/api/preflight", "destination": "/api/index?route=preflight" },
     { "source": "/api/plan", "destination": "/api/index?route=plan" },
     { "source": "/api/bills", "destination": "/api/index?route=bills" },
+    { "source": "/api/roth", "destination": "/api/index?route=roth" },
     { "source": "/api/reconcile", "destination": "/api/index?route=reconcile" },
     { "source": "/api/webhook", "destination": "/api/index?route=webhook" }
   ],
-  "crons": [{ "path": "/api/reconcile", "schedule": "0 13 * * *" }]
+  "crons": [{ "path": "/api/reconcile", "schedule": "0 15 * * *" }]
 }
