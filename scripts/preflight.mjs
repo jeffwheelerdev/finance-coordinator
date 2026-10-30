@@ -27,7 +27,19 @@ export async function verifyDeployment(env = process.env) {
       calculatedTargetAvailable: summarizeBillsPolicy(resolved.policy).targetCents > 0,
       priorityOrder: config.allocations.filter(item => item.enabled).map(item => item.id) },
     observation: { status: observation.status, code: observation.code },
-    roth: checks.roth,
+    // Keep the build receipt below provider log truncation limits. The complete
+    // twelve-month plan belongs in the authenticated Roth/status endpoints.
+    roth: {
+      configured: checks.roth.configured,
+      sourceValid: Boolean(roth.rothPolicy && !roth.rothPolicyError),
+      year: checks.roth.year,
+      previewAnnualLimitCents: checks.roth.previewAnnualLimitCents,
+      monthlyAmountCents: checks.roth.monthlyAmountCents,
+      executionEnabled: checks.roth.executionEnabled,
+      destinationVerified: checks.roth.destinationVerified,
+      ...(checks.roth.destinationError ? { destinationError: checks.roth.destinationError } : {}),
+      blockers: checks.roth.blockers,
+    },
   };
 }
 
