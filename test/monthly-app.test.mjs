@@ -41,8 +41,19 @@ function monthlySource() {
         minAmountCents: 1, maxAmountCents: 400000, verifiedAt: OPENING, reference: 'Private refund proof' },
     ], overrides: [] } } };
 }
+function activationSource(environment) {
+  return { activation_policy: { schemaVersion: 1, updatedAt: UPDATED,
+    sequenceAuthority: { status: 'verified', verifiedAt: UPDATED, reference: 'Private synthetic unattended-authority proof',
+      automaticApproval: true, maxAmountCents: null,
+      accountPairs: [ID(4), ID(3), ID(5), ID(30), ID(6), ID(7)]
+        .map(destinationAccountId => ({ sourceAccountId: ID(1), destinationAccountId }))
+        .concat({ sourceAccountId: ID(5), destinationAccountId: ID(1) }) },
+    emailDelivery: { status: 'verified', verifiedAt: UPDATED, reference: 'Private synthetic provider receipt and inbox proof',
+      provider: 'resend', recipient: environment.ALERTS_EMAIL_TO, sender: environment.ALERTS_EMAIL_FROM,
+      providerAccepted: true, recipientConfirmed: true } } };
+}
 function setup(overrides = {}, { regularCents = 500000, windfallCents = 400000 } = {}) {
-  const environment = env(overrides), bills = billsSource(), monthly = monthlySource();
+  const environment = env(overrides), bills = billsSource(), monthly = monthlySource(), readiness = {};
   const config = withCalculatedBillsTarget(loadConfig(environment), forecastBills(bills.bills_catalog, { now: NOW }));
   const clock = { value: NOW, advance(milliseconds) { this.value += milliseconds; } }, store = new FakeStore();
   const client = new FakeSequence(config, clock);
@@ -73,12 +84,13 @@ function setup(overrides = {}, { regularCents = 500000, windfallCents = 400000 }
     route: { status: 'verified', sourceAccountId: ID(1), destinationAccountId: ID(30), custodian: 'fidelity',
       contributionYear: 'current_calendar_year', verifiedAt: OPENING, reference: 'Private custodian route proof' },
     upstream: { status: 'unverified' } } } };
-  const reads = { bills: [], roth: [], monthly: [] }, factories = [], emails = [], messages = [], factoryClients = [];
+  const reads = { bills: [], roth: [], monthly: [], readiness: [] }, factories = [], emails = [], messages = [], factoryClients = [];
   const appOptions = { env: environment, now: () => clock.value, storeFactory: () => store,
     clientFactory: (resolved, readOnly) => { factoryClients.push({ config: resolved, readOnly }); return client; },
     billsReader: async (...args) => { reads.bills.push(args); if (bills.failure) throw bills.failure; return structuredClone(bills); },
     rothReader: async (...args) => { reads.roth.push(args); if (roth.failure) throw roth.failure; return structuredClone(roth); },
     monthlyReader: async (...args) => { reads.monthly.push(args); if (monthly.failure) throw monthly.failure; return structuredClone(monthly); },
+    readinessReader: async (...args) => { reads.readiness.push(args); if (readiness.failure) throw readiness.failure; return structuredClone(readiness); },
     alertSenderFactory: options => { factories.push(options); return async alert => {
       emails.push(structuredClone(alert)); return { status: 'accepted', deliveryId: ID(8000 + emails.length) };
     }; }, log: { error: value => messages.push(value) } };
@@ -86,7 +98,7 @@ function setup(overrides = {}, { regularCents = 500000, windfallCents = 400000 }
   const request = (path, options = {}) => new Request(`https://finance.example.test${path}`, {
     ...options, headers: { authorization: `Bearer ${CRON}`, ...options.headers },
   });
-  return { app, appOptions, env: environment, config, clock, store, client, bills, monthly, roth, bankRows, reads, factories, emails, messages, factoryClients, request };
+  return { app, appOptions, env: environment, config, clock, store, client, bills, monthly, roth, readiness, bankRows, reads, factories, emails, messages, factoryClients, request };
 }
 
 test('monthly health is public but exposes no identifiers, recipients, evidence or source credentials', async () => {
@@ -98,37 +110,38 @@ test('monthly health is public but exposes no identifiers, recipients, evidence 
     assert.equal(output.includes(privateValue), false);
   }
   assert.equal(s.client.calls.length, 0); assert.equal(s.store.reads, 0); assert.equal(s.factories.length, 0);
-  assert.deepEqual(s.reads, { bills: [], roth: [], monthly: [] });
+  assert.deepEqual(s.reads, { bills: [], roth: [], monthly: [], readiness: [] });
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
-test('new monthly and alerts routes preserve bearer authentication including Vercel rewrites', async () => {
+test('monthly, alerts and readiness routes preserve bearer authentication including Vercel rewrites', async () => {
   const s = setup();
-  for (const path of ['/api/monthly', '/api/alerts', '/api/index?route=monthly', '/api/index?route=alerts']) {
+  for (const path of ['/api/monthly', '/api/alerts', '/api/readiness', '/api/index?route=monthly', '/api/index?route=alerts', '/api/index?route=readiness']) {
     for (const headers of [{}, { authorization: `Bearer ${CRON}wrong` }]) {
       assert.equal((await s.app.fetch(new Request(`https://finance.example.test${path}`, { headers }))).status, 401);
     }
   }
   assert.equal(s.store.reads, 0); assert.equal(s.client.calls.length, 0); assert.equal(s.factories.length, 0);
-  assert.equal(s.reads.monthly.length, 0);
+  assert.equal(s.reads.monthly.length, 0); assert.equal(s.reads.readiness.length, 0);
 });
 
-test('monthly and alerts are GET-only and reject mutations before reading private data', async () => {
+test('monthly, alerts and readiness are GET-only and reject mutations before reading private data', async () => {
   const s = setup();
-  for (const path of ['/api/monthly', '/api/alerts', '/api/index?route=alerts']) {
-    for (const method of ['POST', 'PUT', 'DELETE']) assert.equal((await s.app.fetch(s.request(path, { method }))).status, 405);
+  for (const path of ['/api/monthly', '/api/alerts', '/api/readiness', '/api/index?route=alerts', '/api/index?route=readiness']) {
+    for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) assert.equal((await s.app.fetch(s.request(path, { method }))).status, 405);
   }
   assert.equal(s.store.reads, 0); assert.equal(s.client.calls.length, 0); assert.equal(s.reads.monthly.length, 0);
+  assert.equal(s.reads.readiness.length, 0);
 });
 
 test('disabled monthly routes return 404 without readers, ledger activity or alert construction', async () => {
   const s = setup({ MONTHLY_PRIORITY_ENABLED: 'false' });
-  for (const path of ['/api/monthly', '/api/alerts', '/api/index?route=monthly', '/api/index?route=alerts']) {
+  for (const path of ['/api/monthly', '/api/alerts', '/api/readiness', '/api/index?route=monthly', '/api/index?route=alerts', '/api/index?route=readiness']) {
     const response = await s.app.fetch(s.request(path));
     assert.equal(response.status, 404); assert.equal((await response.json()).code, 'NOT_FOUND');
   }
   assert.equal(s.store.reads, 0); assert.equal(s.store.writes.length, 0); assert.equal(s.client.calls.length, 0);
-  assert.equal(s.factories.length, 0); assert.equal(s.reads.monthly.length, 0);
+  assert.equal(s.factories.length, 0); assert.equal(s.reads.monthly.length, 0); assert.equal(s.reads.readiness.length, 0);
 });
 
 test('live-configured status, monthly, Roth and alerts endpoints remain read-only', async () => {
@@ -160,6 +173,97 @@ test('monthly preflight checks all seven real roles and all disabled legacy rule
   assert.equal(readAccounts.has(ID(2)), false);
   assert.deepEqual(new Set(s.client.calls.filter(row => row.method === 'getRule').map(row => row.id)), new Set([...Object.values(RULES), ID(14)]));
   assert.equal(s.client.calls.some(row => ['getRuleExecution', 'listRuleExecutions'].includes(row.method)), false);
+  assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0); assert.equal(s.emails.length, 0);
+});
+
+test('readiness and its rewrite perform only reads and never expose private evidence, identities or credentials', async () => {
+  const s = setup({ APP_MODE: 'live', LIVE_TRANSFERS_ENABLED: 'true' });
+  Object.assign(s.readiness, activationSource(s.env));
+  const beforeEnvironment = structuredClone(s.env), beforeLedger = structuredClone(s.store.value);
+  for (const path of ['/api/readiness', '/api/index?route=readiness', '/api/preflight']) {
+    const response = await s.app.fetch(s.request(path)), body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    const readiness = path === '/api/preflight' ? body.readiness : body;
+    assert.equal(readiness.readChecks, 'passed'); assert.equal(readiness.readyForActivation, true);
+    assert.equal(readiness.limitations.realTransferTested, false);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const output = JSON.stringify(body);
+    for (const secret of [CRON, s.env.SEQUENCE_API_KEY, s.env.BLOB_READ_WRITE_TOKEN, s.env.GLOBAL_CONFIG, s.env.RESEND_API_KEY,
+      s.env.ALERTS_EMAIL_TO, s.env.ALERTS_EMAIL_FROM, 'private-sender@example.test', ...Object.values(s.config.accounts),
+      ...Object.values(s.config.rules), ID(6), ID(7), ID(30), 'Private synthetic unattended-authority proof',
+      'Private synthetic provider receipt and inbox proof', 'Private custodian route proof', 'Private ordinary-pay proof',
+      'PRIVATE SYNTHETIC ORDINARY PAY', 'Private reviewed empty opening evidence', 'Synthetic reviewed test evidence']) {
+      assert.equal(output.includes(secret), false, `Private test data leaked: ${secret}`);
+    }
+  }
+  assert.deepEqual(s.env, beforeEnvironment); assert.deepEqual(s.store.value, beforeLedger);
+  assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0); assert.equal(s.emails.length, 0);
+  assert.ok(s.factories.every(options => options.readOnly)); assert.ok(s.factoryClients.every(options => options.readOnly));
+  assert.deepEqual(s.reads.readiness, Array.from({ length: 3 }, () => [['activation_policy'], { consistentRead: true }]));
+  assert.ok(s.reads.monthly.every(args => JSON.stringify(args[0]) === '["monthly_policy"]'));
+});
+
+test('missing activation evidence blocks readiness while account reads and the verified existing Roth route pass', async () => {
+  const s = setup(), response = await s.app.fetch(s.request('/api/preflight')), body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.status, 'read_checks_passed');
+  assert.equal(body.readiness.readChecks, 'passed'); assert.equal(body.readiness.readyForActivation, false);
+  assert.equal(body.readiness.status, 'blocked'); assert.equal(body.activationRequired, true);
+  assert.ok(body.readiness.blockers.includes('ACTIVATION_POLICY_INVALID'));
+  assert.ok(body.readiness.blockers.includes('SEQUENCE_AUTHORITY_UNVERIFIED'));
+  assert.ok(body.readiness.blockers.includes('EMAIL_DELIVERY_UNVERIFIED'));
+  assert.equal(body.roth.destinationVerified, true);
+  assert.equal(body.roth.blockers.includes('ROTH_ROUTE_UNVERIFIED'), false);
+  for (const id of ['account_and_cash_reads', 'legacy_rules_disabled', 'income_reconciliation', 'next_cycle_roth_policy', 'roth_route_and_contributions']) {
+    assert.equal(body.readiness.checks.find(check => check.id === id)?.status, 'passed', id);
+  }
+  assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0); assert.equal(s.emails.length, 0);
+});
+
+test('a fully reviewed synthetic setup can be ready while both execution switches remain inactive', async () => {
+  const s = setup(); Object.assign(s.readiness, activationSource(s.env));
+  const response = await s.app.fetch(s.request('/api/readiness?mode=live&live=true&recipient=attacker@example.test&amountInCents=1'));
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.status, 'ready_for_user_activation');
+  assert.equal(body.readyForActivation, true); assert.equal(body.executionEnabled, false); assert.equal(body.activationEstablished, false);
+  assert.deepEqual(body.blockers, []); assert.ok(body.checks.every(check => check.status === 'passed'));
+  assert.deepEqual(body.nextCycle, { year: 2030, monthKey: '2030-02', dueAt: '2030-02-01T15:00:00.000Z', timeZone: 'America/New_York' });
+  assert.deepEqual(body.activationChanges.map(change => change.setting), ['APP_MODE', 'LIVE_TRANSFERS_ENABLED', 'AUTOMATION_START_AT']);
+  assert.equal(body.recheckAtActivation, true);
+  assert.equal(s.env.APP_MODE, 'observe'); assert.equal(s.env.LIVE_TRANSFERS_ENABLED, 'false');
+  assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0); assert.equal(s.emails.length, 0);
+  assert.equal(JSON.stringify(body).includes('attacker@example.test'), false);
+});
+
+test('a delivered-email proof for another recipient cannot make the current configuration ready', async () => {
+  const s = setup(); Object.assign(s.readiness, activationSource(s.env));
+  s.readiness.activation_policy.emailDelivery.recipient = 'previous-private-recipient@example.test';
+  const response = await s.app.fetch(s.request('/api/readiness')), body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.readChecks, 'passed');
+  assert.equal(body.readyForActivation, false); assert.deepEqual(body.blockers, ['EMAIL_DELIVERY_RECIPIENT_MISMATCH']);
+  assert.equal(body.checks.find(check => check.id === 'activation_evidence').status, 'passed');
+  assert.equal(body.checks.find(check => check.id === 'email_delivery').status, 'blocked');
+  assert.equal(JSON.stringify(body).includes('previous-private-recipient@example.test'), false);
+  assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0); assert.equal(s.emails.length, 0);
+});
+
+test('a delivered-email proof for another sender cannot make the current configuration ready', async () => {
+  const s = setup(); Object.assign(s.readiness, activationSource(s.env));
+  s.readiness.activation_policy.emailDelivery.sender = 'Finance <previous-private-sender@example.test>';
+  const response = await s.app.fetch(s.request('/api/readiness')), body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.readChecks, 'passed');
+  assert.equal(body.readyForActivation, false); assert.deepEqual(body.blockers, ['EMAIL_DELIVERY_SENDER_MISMATCH']);
+  assert.equal(body.checks.find(check => check.id === 'activation_evidence').status, 'passed');
+  assert.equal(body.checks.find(check => check.id === 'email_delivery').status, 'blocked');
+  assert.equal(JSON.stringify(body).includes('previous-private-sender@example.test'), false);
+  assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0); assert.equal(s.emails.length, 0);
+});
+
+test('activation evidence read failures leave safe blockers without leaking diagnostics or suppressing account reads', async () => {
+  const s = setup(); s.readiness.failure = new Error('Private activation-provider credential and response');
+  const response = await s.app.fetch(s.request('/api/readiness')), body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.readChecks, 'passed');
+  assert.equal(body.readyForActivation, false); assert.ok(body.blockers.includes('ACTIVATION_POLICY_UNAVAILABLE'));
+  assert.equal(JSON.stringify([body, s.messages]).includes('Private activation-provider'), false);
   assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0); assert.equal(s.emails.length, 0);
 });
 
@@ -269,12 +373,12 @@ test('monthly source failures preserve a typed blocker without leaking source di
 
 test('preview deployment gate protects monthly routes before readers, provider calls or email construction', async () => {
   const s = setup({ VERCEL_ENV: 'preview', APP_MODE: 'live', LIVE_TRANSFERS_ENABLED: 'true' });
-  for (const path of ['/api/monthly', '/api/alerts', '/api/plan', '/api/reconcile']) {
+  for (const path of ['/api/monthly', '/api/alerts', '/api/readiness', '/api/index?route=readiness', '/api/plan', '/api/reconcile']) {
     const response = await s.app.fetch(s.request(path));
     assert.equal(response.status, 503); assert.equal((await response.json()).code, 'PREVIEW_FINANCIAL_OPERATIONS_DISABLED');
   }
   assert.equal(s.store.reads, 0); assert.equal(s.client.calls.length, 0); assert.equal(s.factories.length, 0);
-  assert.equal(s.reads.monthly.length, 0);
+  assert.equal(s.reads.monthly.length, 0); assert.equal(s.reads.readiness.length, 0);
 });
 
 test('canonical host and no-body gates prevent stale or caller-defined live reconciliations', async () => {

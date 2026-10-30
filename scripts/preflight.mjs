@@ -7,6 +7,8 @@ import { resolveBillsConfiguration, summarizeBillsPolicy } from '../lib/bills-so
 import { resolveRothPolicy } from '../lib/roth-source.mjs';
 import { resolveMonthlyPolicy } from '../lib/monthly-source.mjs';
 import { reconcileMonthly } from '../lib/monthly-engine.mjs';
+import { resolveActivationPolicy } from '../lib/activation-source.mjs';
+import { assertActivationReadyForDeployment } from '../lib/activation-readiness.mjs';
 
 // This script can be run in a production build without ever enabling a POST to
 // Sequence, including on a future live deployment. Never print credentials or IDs.
@@ -15,9 +17,15 @@ export async function verifyDeployment(env = process.env) {
   const config = resolved.config;
   const roth = await resolveRothPolicy(config, { connectionString: env.GLOBAL_CONFIG });
   const monthly = await resolveMonthlyPolicy(config, { connectionString: env.GLOBAL_CONFIG });
+  const readiness = await resolveActivationPolicy(config, { connectionString: env.GLOBAL_CONFIG });
   const client = new SequenceClient({ apiKey: env.SEQUENCE_API_KEY, liveEnabled: false, maxRequests: 90, deadlineAt: Date.now() + 230_000 });
   const store = createBlobStore({ token: env.BLOB_READ_WRITE_TOKEN });
-  const checks = await preflight({ config, client, store, env, billsPolicy: resolved.policy, ...roth, ...monthly });
+  const checks = await preflight({ config, client, store, env, billsPolicy: resolved.policy, ...roth, ...monthly, ...readiness });
+  if (config.monthly?.enabled) console.log(JSON.stringify({ component: 'activation-readiness',
+    status: checks.readiness.status, readyForActivation: checks.readiness.readyForActivation,
+    activationEstablished: checks.readiness.activationEstablished, nextCycle: checks.readiness.nextCycle,
+    blockers: checks.readiness.blockers }));
+  assertActivationReadyForDeployment(config, checks.readiness);
   const observation = await (config.monthly?.enabled ? reconcileMonthly : reconcile)({ config, client, store, forceObserve: true, ...roth, ...monthly });
   const stagedMonthlyBlocker = config.monthly?.enabled && config.mode === 'observe' && !config.liveEnabled &&
     ['INCOME_OPENING_UNVERIFIED', 'MONTHLY_ACTIVATION_REQUIRED'].includes(observation.code);
@@ -48,7 +56,10 @@ export async function verifyDeployment(env = process.env) {
     ...(config.monthly?.enabled ? { monthly: { sourceValid: checks.monthly.sourceValid,
       openingVerified: checks.monthly.openingVerified, accountRolesVerified: checks.monthly.accountRolesVerified,
       schedule: 'first_of_month', annualCloseMonth: config.monthly.annualCloseMonth, blockers: checks.monthly.blockers },
-      email: checks.alertDelivery } : {}),
+      email: checks.alertDelivery,
+      readiness: { status: checks.readiness.status, readyForActivation: checks.readiness.readyForActivation,
+        activationEstablished: checks.readiness.activationEstablished, nextCycle: checks.readiness.nextCycle,
+        blockers: checks.readiness.blockers } } : {}),
   };
 }
 

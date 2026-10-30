@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "suite": "monthly-activation-rehearsal-v1",
+  "softwareVersion": "0.6.1",
+  "status": "passed",
+  "deterministic": true,
+  "syntheticDataOnly": true,
+  "networkAttempts": 0,
+  "realTransfers": 0,
+  "realEmails": 0,
+  "scenarioCount": 5,
+  "scenarios": [
+    {
+      "id": "full_year_carry_and_december_close",
+      "status": "passed",
+      "syntheticYear": 2030,
+      "months": [
+        {
+          "monthKey": "2030-01",
+          "normalOpeningCents": 50000,
+          "order": [
+            "roth-ira"
+          ],
+          "rothCents": 50000,
+          "projectCents": 0,
+          "personalCents": 0,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-02",
+          "normalOpeningCents": 90000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 75000,
+          "projectCents": 4500,
+          "personalCents": 10500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-03",
+          "normalOpeningCents": 20000,
+          "order": [
+            "roth-ira"
+          ],
+          "rothCents": 20000,
+          "projectCents": 0,
+          "personalCents": 0,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-04",
+          "normalOpeningCents": 120000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 105000,
+          "projectCents": 6000,
+          "personalCents": 9000,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-05",
+          "normalOpeningCents": 100000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 5000,
+          "personalCents": 32500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-06",
+          "normalOpeningCents": 100000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 5000,
+          "personalCents": 32500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-07",
+          "normalOpeningCents": 100000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 5000,
+          "personalCents": 32500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-08",
+          "normalOpeningCents": 100000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 5000,
+          "personalCents": 32500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-09",
+          "normalOpeningCents": 100000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 5000,
+          "personalCents": 32500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-10",
+          "normalOpeningCents": 100000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 5000,
+          "personalCents": 32500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-11",
+          "normalOpeningCents": 100000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 5000,
+          "personalCents": 32500,
+          "windfallUsedCents": 0
+        },
+        {
+          "monthKey": "2030-12",
+          "normalOpeningCents": 20000,
+          "order": [
+            "roth-ira",
+            "project-savings",
+            "personal-investment"
+          ],
+          "rothCents": 62500,
+          "projectCents": 4500,
+          "personalCents": 353000,
+          "windfallUsedCents": 400000
+        }
+      ],
+      "annualRothCents": 750000,
+      "annualProjectCents": 50000,
+      "decemberWindfallCents": {
+        "roth": 42500,
+        "project": 4500,
+        "personal": 353000
+      },
+      "duplicateRequests": 0,
+      "doubleCountedShortfalls": 0
+    },
+    {
+      "id": "priority_shortage_and_partial_roth",
+      "status": "passed",
+      "orderedEssentialPaymentsCents": [
+        350000,
+        225000,
+        25000
+      ],
+      "partialRothCents": 45000,
+      "rothShortfallCents": 17500,
+      "lowerInvestmentRequests": 0,
+      "emailOutagePreventedPartial": false
+    },
+    {
+      "id": "provider_uncertain_and_failed_outcomes",
+      "status": "passed",
+      "exactRecoveryBodyAndKey": true,
+      "acceptedUnknownRequests": 1,
+      "laterRequestsAfterUnknown": 0,
+      "laterRequestsAfterFailure": 0
+    },
+    {
+      "id": "first_day_schedule_and_prospective_activation",
+      "status": "passed",
+      "requestsBeforeDue": 0,
+      "duplicateWakeupRequests": 0,
+      "offDayNewRequests": 0,
+      "lateDepositConsumedByFrozenCycleCents": 0,
+      "historicalCatchupBeforeActivationCents": 0
+    },
+    {
+      "id": "year_transition_and_new_annual_limit",
+      "status": "passed",
+      "requestsWithMissingNewYearPolicy": 0,
+      "priorYearWindfallHeldCents": 20000,
+      "priorYearRothReplayCents": 0,
+      "syntheticNextYearLimitCents": 800000,
+      "newYearCatchupCents": 133333,
+      "exactCentInstallments": [
+        66666,
+        66667
+      ]
+    }
+  ],
+  "resultHash": "d83e8e1070975fb5d0fef5224d6f1a4637fb0cda9cfaaec61e7575484dffa4b0",
+  "limitations": [
+    "Synthetic provider acceptance and settlement do not prove real transfer permission.",
+    "Synthetic alerts do not prove real email delivery.",
+    "Live activation readiness is checked separately."
+  ]
+}

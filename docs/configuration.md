@@ -1,4 +1,4 @@
-# Configuration — v0.6
+# Configuration — v0.6.1
 
 Real account bindings, recipients, credentials, and financial policy belong in
 private production settings. The [example file](../.env.example) uses synthetic
@@ -12,9 +12,10 @@ available to previews.
 | `APP_MODE` | Exactly `observe` or `live`. |
 | `LIVE_TRANSFERS_ENABLED` | Exactly `true` or `false`; defaults to `false`. Financial submission also requires `APP_MODE=live`. |
 | `MONTHLY_PRIORITY_ENABLED` | Exactly `true` or `false`; defaults to `false` for legacy compatibility. Set `true` for the current monthly policy. This is not an activation flag. |
+| `RUN_SEQUENCE_SIMULATION` | Optional explicit provider-test flag. Only `true` enables the separate runner, and only with `APP_MODE=observe` and `LIVE_TRANSFERS_ENABLED=false`. Leave absent/`false` normally; remove or reset after the authorized inactive build. It cannot enable real transfers. |
 | `AUTOMATION_START_AT` | Prospective timezone-qualified ISO cutoff; required in live mode. Preserve the recorded value after activation. |
 | `FINANCE_ACCOUNT_IDS_JSON` | Exactly the four legacy keys `income`, `pod`, `general`, `bills`, with distinct provider UUIDs. The Pod mapping remains for identity/migration checks and is excluded from monthly routing. |
-| `FINANCE_RULE_IDS_JSON` | Exactly `payout`, `funding`, `legacyGeneral`, with distinct UUIDs. All must be disabled in monthly mode. |
+| `FINANCE_RULE_IDS_JSON` | Exactly `payout`, `funding`, `legacyGeneral`, with distinct UUIDs. These archived manual rules must remain disabled in monthly mode. |
 | `EMERGENCY_ACCOUNT_ID` | Exact Emergency cash-account UUID; required in monthly mode. Adds the internal `accounts.emergency` role. |
 | `PROJECT_ACCOUNT_ID` | Exact Project cash-account UUID; required in monthly mode. |
 | `PERSONAL_INVESTMENT_ACCOUNT_ID` | Exact Personal Investment destination UUID; required in monthly mode. Must be an investment account capable of receiving funds. |
@@ -42,9 +43,9 @@ formats, fractional cents, and unsafe arithmetic are rejected.
 | Variable | Purpose |
 | --- | --- |
 | `FINANCE_CANONICAL_HOST` | Stable production hostname without scheme or path. Reconciliation and webhook writes reject a different deployment host. |
-| `SEQUENCE_API_KEY` | Private scoped key for the required account/history reads and exact authorized transfer pairs. |
+| `SEQUENCE_API_KEY` | Existing private scoped key for the required reads and exact authorized transfer pairs. Preparation does not request a replacement. Unattended approval and limit evidence are recorded separately. |
 | `BLOB_READ_WRITE_TOKEN` | Access to the one private execution ledger. |
-| `GLOBAL_CONFIG` | Private read connection for `bills_catalog`, `bills_monitor`, `roth_policy`, and `monthly_policy`. |
+| `GLOBAL_CONFIG` | Private read connection for `bills_catalog`, `bills_monitor`, `roth_policy`, `monthly_policy`, and `activation_policy`. |
 | `CRON_SECRET` | Private bearer secret, at least 16 characters, for cron/admin routes. |
 | `SEQUENCE_WEBHOOK_SECRET` | Optional signing secret issued for the actual registered webhook endpoint. Presence is not proof of registration or delivery. |
 | `RESEND_API_KEY` | Private email-provider credential. Required before monthly financial activation. |
@@ -53,7 +54,9 @@ formats, fractional cents, and unsafe arithmetic are rejected.
 
 The email integration is not connected merely because recipient settings exist.
 A valid provider key, sender permission, and separately authorized delivery
-verification are still needed. Resend's `onboarding@resend.dev` sender is
+verification are still needed. `configured=true` is a syntax/configuration
+check; activation additionally requires provider acceptance and recipient
+receipt recorded for the current sender and recipient. Resend's `onboarding@resend.dev` sender is
 restricted to the email associated with that Resend account; other recipients
 require an appropriate verified domain. See the
 [provider restriction](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain).
@@ -66,6 +69,7 @@ require an appropriate verified domain. See the
 | `bills_monitor` | A successful matching Finances review no older than seven days. |
 | `roth_policy` | Strict statutory/personal tax-year policy plus current-year contribution-route evidence. |
 | `monthly_policy` | Verified opening Income partition and reviewed receipt classifications. |
+| `activation_policy` | Reviewed existing-key unattended authority and verified email receipt, used for activation readiness. |
 
 Reads use origin consistency and no stale-on-error fallback. Private policy
 does not replace the conditional Blob ledger or its execution lease. The
@@ -113,6 +117,66 @@ DFAS description shared with bonuses does not establish that fact; use a
 transaction-specific, documented split when the bank metadata is ambiguous.
 Unclassified receipts are held. The opening record defaults to unverified
 rather than assuming the entire bank balance is regular cash.
+
+## Private operational evidence
+
+The `activation_policy` key has exactly `schemaVersion`, `updatedAt`,
+`sequenceAuthority`, and `emailDelivery`. Its inactive seed is:
+
+```json
+{
+  "schemaVersion": 1,
+  "updatedAt": "2030-01-01T00:00:00.000Z",
+  "sequenceAuthority": { "status": "unverified" },
+  "emailDelivery": { "status": "unverified" }
+}
+```
+
+Replace the synthetic timestamp with the actual revision time. Each unverified
+record contains only `status`. Verified records require these exact fields:
+
+| Record | Required fields and meaning |
+| --- | --- |
+| `sequenceAuthority` | `status:"verified"`, `verifiedAt`, private `reference`, `automaticApproval`, `accountPairs`, `maxAmountCents`. |
+| `accountPairs[]` | Exactly `sourceAccountId` and `destinationAccountId`; distinct valid UUIDs for each directional pair. Include Income→Bills, General, Emergency, Roth, Project, Personal Investment, and Emergency→Income. |
+| `automaticApproval` | A boolean recording the existing key's reviewed ability to execute without individual human approval. Readiness requires `true`; setting this field does not change provider controls. |
+| `maxAmountCents` | An integer of at least 100 for the reviewed common conservative cap, or `null` only when absence of an amount cap has been verified. For differing pair caps, use a bound no greater than any required pair's cap. Do not use `null` for an unknown limit. |
+| `emailDelivery` | `status:"verified"`, `verifiedAt`, private `reference`, `provider:"resend"`, `recipient`, `sender`, `providerAccepted:true`, `recipientConfirmed:true`. Both successful provider acceptance and actual recipient receipt must be supported. |
+
+Evidence timestamps must not be later than `updatedAt`, and the policy revision
+must not be in the future. Keep all real addresses, account IDs, and evidence
+references private. The email sender and recipient must match the effective
+`ALERTS_EMAIL_FROM` and `ALERTS_EMAIL_TO`; changing either requires corresponding
+delivery evidence. Valid configuration syntax alone cannot satisfy this record.
+
+The provider authority review concerns the existing production credential, not
+the ChatGPT OAuth connection. Sequence's OAuth money movements require human
+approval, while API-key approval settings and amount caps are separate. A
+simulation bypasses approval and cannot prove unattended behavior. See the
+[Sequence API reference](https://api.getsequence.io/platform/).
+
+`npm run simulate` is the no-network rehearsal of the actual monthly engine.
+`npm run simulate:sequence` is a separate, explicitly gated provider check using
+the existing runtime key, current configured pairs, Bills target, and statutory
+Roth preview. Its requests always include `simulation:true` and synthetic cash;
+its seven test amounts are described in [activation](activation.md#explicit-provider-simulations).
+The output omits credentials and provider IDs. It neither changes
+`activation_policy` nor writes the financial ledger. Successful scope tests do
+not resolve an unverified unattended approval setting or email receipt.
+
+`GET /api/readiness` checks these records with current account/cash reads,
+disabled-rule evidence, income reconciliation, Bills monitoring, and the next
+cycle's Roth policy. Its limit assessment uses a conservative upper bound for
+one possible request, not a transfer plan; it can require limit review even
+when a particular planned allocation is smaller. Readiness separates missing
+prerequisites in `blockers` from final switches in `activationChanges`.
+
+The initial live production build is gated on readiness. Already established
+activation remains distinguishable from new activation so known transfer
+observation and code repairs do not require resetting the ledger or cutoff.
+The [activation runbook](activation.md) describes the fresh checks and final
+authorized environment/deployment changes. No activation occurs merely by
+writing a verified policy or running `npm run simulate`.
 
 ## Change a budget or extend the design
 

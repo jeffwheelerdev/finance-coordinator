@@ -1,8 +1,10 @@
 # Finance Coordinator
 
-Version **0.6.0** adds one monthly allocation cycle for Sequence, running on
-Vercel. It funds accounts directly from Income, records the cash reserved for
-each request, and keeps windfalls separate from ordinary monthly income.
+Version **0.6.1** prepares the monthly Sequence coordinator for deliberate
+activation, with a separate readiness report and an offline engine rehearsal.
+The v0.6 allocation policy is unchanged: it funds accounts directly from Income,
+records the cash reserved for each request, and keeps windfalls separate from
+ordinary monthly income.
 
 The new branch is selected with `MONTHLY_PRIORITY_ENABLED=true`. The example
 configuration remains financially inactive: `APP_MODE=observe` and
@@ -36,9 +38,11 @@ incoming transfers. A hold that lowers available cash does not create additional
 room under the Emergency cap.
 
 The routing Pod and its refund event are not part of this branch. All four
-mapped legacy Sequence rules must stay disabled. An Emergency balance above
-its target can produce a separately recorded Emergency→Income excess return;
-that incoming transfer is not spendable before settlement and reconciliation.
+mapped legacy Sequence rules are archived, manual-only, and disabled. They
+preserve historical actions; they do not manage the current monthly logic and
+must stay disabled. An Emergency balance above its target can produce a
+separately recorded Emergency→Income excess return; that incoming transfer is
+not spendable before settlement and reconciliation.
 
 ## Regular income and windfalls
 
@@ -74,9 +78,10 @@ older Project shortfalls are addressed by the annual windfall process.
 
 The direct email adapter uses Resend and a durable alert outbox. It attempts to
 send actionable shortfall and exception alerts when the coordinator detects
-them. Provider acceptance is not proof of inbox delivery. The email provider
-still needs its private API key and permitted sender configuration; no real
-email delivery or financial transfer is established by the offline tests.
+them. Provider acceptance is not proof of inbox delivery. Activation requires
+working provider configuration and private evidence of both acceptance and
+recipient-confirmed receipt for the configured sender and recipient. Offline
+tests establish neither real email delivery nor a financial transfer.
 
 ## Evidence and execution
 
@@ -92,6 +97,31 @@ Removing the visible Pod does not remove the provider's internal routing.
 See [Sequence balances](https://intercom.help/sequence/en/articles/12856934-intro-to-external-accounts)
 and [external-to-external transfers](https://support.getsequence.io/hc/en-us/articles/48175534864531-Can-I-transfer-from-one-external-account-to-another).
 
+## Activation readiness
+
+The authenticated `GET /api/readiness` report distinguishes unfinished
+prerequisites from the final activation changes. `readyForActivation=true` can
+coexist with `executionEnabled=false`; that is the intended prepared state.
+`blockers` identify missing evidence, while `activationChanges` lists the live
+gates and prospective cutoff still to apply after authorization.
+
+The private `activation_policy` records the existing Sequence key's reviewed
+unattended transfer authority, exact account pairs and amount limits, plus real
+email acceptance and recipient receipt. It defaults to unverified. No replacement
+Sequence key is requested. Syntactically valid settings or a successful read do
+not establish these operational facts.
+
+An initial production build with the live-transfer gate enabled must pass this
+readiness gate. Established activation is kept distinct so known transfers can
+remain observable and an ordinary code repair need not masquerade as a new
+activation. Existing evidence, execution safeguards, and build checks still
+apply.
+
+“Activate automation” can be the final instruction once the prerequisites are
+complete and freshly checked. Until missing financial facts, email receipt,
+and provider approval controls are resolved, one-phrase activation is not
+established. See the [activation runbook](docs/activation.md#4-activate-prospectively-when-authorized).
+
 ## Documentation and validation
 
 | Location | Purpose |
@@ -100,6 +130,7 @@ and [external-to-external transfers](https://support.getsequence.io/hc/en-us/art
 | [Configuration](docs/configuration.md) | Private variables, policy records, and account bindings. |
 | [Architecture](docs/architecture.md) | Evidence, durable reservations, retries, and operational limits. |
 | [Activation](docs/activation.md) | Staged checks, email readiness, deliberate activation, and recovery. |
+| [Rehearsal receipt](docs/monthly-rehearsal.json) | Deterministic synthetic scenarios and their results; no live financial data. |
 | [Bills monitor](docs/bills-monitor.md) | Private catalog evidence and automatic forecast updates. |
 | [Roth policy](docs/roth-policy.md) | Personal tax-year ceilings, contribution history, and route evidence. |
 | [Roth limit monitor](docs/roth-monitor.md) | Official IRS publication checks and annual policy updates. |
@@ -109,11 +140,39 @@ Use Node.js 22 or 24 and Python 3.12 for the historical suites:
 ```bash
 npm ci --ignore-scripts
 npm test
+npm run simulate
 python3 scripts/test_archives.py
 ```
 
 These tests use synthetic evidence and mocked providers. They need no financial
 credentials and make no real transfers or send real emails.
+
+`npm run simulate` runs `scripts/rehearse-monthly.mjs` against the actual monthly
+engine with in-memory providers, storage, and alerts. It emits a deterministic
+JSON receipt for annual carryforward, December windfalls, shortages, retries,
+timing, and year transitions. Network access is forbidden in the runner. This
+rehearsal is separate from Sequence's native-rule simulation and from production
+read-only readiness checks.
+
+The separately authorized provider check is `npm run simulate:sequence`. It uses
+the existing runtime Sequence key and requires all three exact settings:
+`RUN_SEQUENCE_SIMULATION=true`, `APP_MODE=observe`, and
+`LIVE_TRANSFERS_ENABLED=false`. The default offline rehearsal never enables this
+check. An inactive production build may run it once under the explicit flag;
+reset that flag to `false` or remove it afterward.
+
+The provider runner sends at most seven synthetic probes through a separate
+adapter. Every POST hardcodes `simulation:true` and a synthetic source balance.
+It checks the six Income destinations and Emergency→Income, stops on the first
+failure, and never retries or writes the application ledger. Sequence records
+the simulations, but no live transfer is requested. Results show safe route
+labels and tested amounts, excluding credentials and provider identifiers.
+
+Successful provider simulations establish acceptance of the configured pairs
+at those test amounts. They do not establish unlimited authority, real available
+cash, personal IRA eligibility, ACH settlement, email receipt, or unattended
+approval: Sequence bypasses human approval during simulations. Operational
+readiness remains a separate requirement.
 
 ## History and privacy
 

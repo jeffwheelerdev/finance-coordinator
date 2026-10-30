@@ -11,6 +11,7 @@
     { "source": "/api/health", "destination": "/api/index?route=health" },
     { "source": "/api/status", "destination": "/api/index?route=status" },
     { "source": "/api/preflight", "destination": "/api/index?route=preflight" },
+    { "source": "/api/readiness", "destination": "/api/index?route=readiness" },
     { "source": "/api/plan", "destination": "/api/index?route=plan" },
     { "source": "/api/bills", "destination": "/api/index?route=bills" },
     { "source": "/api/roth", "destination": "/api/index?route=roth" },
