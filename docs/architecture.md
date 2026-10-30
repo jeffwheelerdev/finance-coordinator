@@ -1,4 +1,4 @@
-# Architecture — v0.6 monthly coordinator
+# Architecture — monthly coordinator and private dashboard
 
 The current monthly branch separates policy, evidence, allocation planning,
 execution, and alert delivery. `MONTHLY_PRIORITY_ENABLED=true` selects this
@@ -26,13 +26,17 @@ lease protect against overlapping cron or webhook invocations.
 
 ## Monthly execution boundary
 
-The calendar is `America/New_York`. New requests are allowed on its first day,
-at or after 15:00 UTC for that month's slot. The activation cutoff determines
+The calendar is `America/New_York`. New requests are allowed on the configured
+day (the 1st by default), at or after 15:00 UTC for that month's frozen slot.
+January–November allow days 1–28; December allows days 1–15.
+The activation cutoff determines
 the first eligible month. A later-day cron or webhook can observe an existing
 request and update evidence, but cannot initiate a missed allocation.
 
-The daily 15:00 UTC cron is a reconciliation schedule, not a daily funding
-schedule. The new branch does not inspect the Pod balance or wait for a refund.
+The daily 15:00 UTC cron starts reconciliation. During an eligible monthly
+window, expiring Queue messages request bounded hourly follow-up checks through
+the current canonical service. This does not create new funding dates.
+The monthly branch does not inspect the Pod balance or wait for a refund.
 Every mapped native allocation/excess-return rule must be disabled.
 
 ## Cash and income evidence

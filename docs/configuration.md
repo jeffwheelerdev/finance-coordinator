@@ -1,4 +1,4 @@
-# Configuration — v0.7.0
+# Configuration — v0.7.1
 
 Real account bindings, recipients, credentials, and financial policy belong in
 private production settings. The [example file](../.env.example) uses synthetic

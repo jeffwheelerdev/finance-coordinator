@@ -1,6 +1,6 @@
 # Finance Coordinator
 
-Version **0.7.0** adds a private financial control room to the existing monthly
+Version **0.7.1** adds a private financial control room to the existing monthly
 automation engine: a seven-account money map, transfer milestones, readiness
 checks, redacted diagnostics, a pure what-if simulator, and reviewed settings
 changes with a durable revision history. The dashboard and execution engine

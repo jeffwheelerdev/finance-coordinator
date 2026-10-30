@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BlobPreconditionFailedError, BlobError } from '@vercel/blob';
+import { gzipSync } from 'node:zlib';
+import { BlobPreconditionFailedError, BlobError, get as sdkGet } from '@vercel/blob';
+import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { createBlobStore, StoreConflict, LEDGER_PATH, MAX_LEDGER_BYTES } from '../lib/store.mjs';
 
 const token = 'synthetic-private-blob-token';
@@ -19,7 +21,53 @@ test('private ledger reads bypass cache and preserve the exact ETag', async () =
   assert.deepEqual(result, { value: { schemaVersion: 1 }, etag: '"version-1"' });
   assert.equal(request[0], LEDGER_PATH); assert.equal(request[1].access, 'private');
   assert.equal(request[1].useCache, false); assert.equal(request[1].token, token);
+  assert.deepEqual(request[1].headers, { 'Accept-Encoding': 'identity' });
   assert.ok(request[1].abortSignal instanceof AbortSignal);
+});
+
+test('actual SDK origin reads request identity encoding and retain its strong version for the next conditional write', async () => {
+  const originalDispatcher = getGlobalDispatcher(), mock = new MockAgent(), sdkToken = 'vercel_blob_rw_syntheticstore_private';
+  const contents = JSON.stringify({ schemaVersion: 1, syntheticPadding: 'x'.repeat(4096) });
+  const observed = [], writes = [];
+  mock.disableNetConnect();
+  mock.get('https://syntheticstore.private.blob.vercel-storage.com')
+    .intercept({ path: `/${LEDGER_PATH}?cache=0`, method: 'GET' }).reply(options => {
+    const headers = new Headers(options.headers), identity = headers.get('accept-encoding') === 'identity';
+    assert.equal(headers.get('authorization'), `Bearer ${sdkToken}`);
+    observed.push(identity);
+    const data = identity ? contents : gzipSync(contents);
+    return { statusCode: 200, data, responseOptions: { headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(data)),
+      etag: identity ? '"strong-stored-version"' : 'W/"compressed-version"', ...(identity ? {} : { 'content-encoding': 'gzip' }) } } };
+  }).times(2);
+  setGlobalDispatcher(mock);
+  try {
+    // The SDK itself forwards the representation's validator unchanged. A read
+    // without the transport preference reproduces the failing weak metadata.
+    const compressed = await sdkGet(LEDGER_PATH, { access: 'private', token: sdkToken, useCache: false });
+    assert.equal(compressed.blob.etag, 'W/"compressed-version"'); await compressed.stream.cancel();
+    const s = createBlobStore({ token: sdkToken, getImpl: sdkGet, putImpl: async (...args) => {
+      writes.push(args); return { pathname: LEDGER_PATH, etag: '"next-strong-version"' };
+    } });
+    const current = await s.read();
+    assert.equal(current.etag, '"strong-stored-version"'); assert.deepEqual(current.value, JSON.parse(contents));
+    const next = await s.compareAndSwap(current.etag, { ...current.value, reviewed: true });
+    assert.equal(next.etag, '"next-strong-version"'); assert.deepEqual(observed, [false, true]);
+    assert.equal(writes.length, 1); assert.equal(writes[0][2].ifMatch, '"strong-stored-version"');
+    assert.equal(writes[0][2].allowOverwrite, true);
+  } finally { setGlobalDispatcher(originalDispatcher); await mock.close(); }
+});
+
+test('an origin that still returns weak or missing metadata cannot weaken the financial CAS condition', async () => {
+  for (const version of ['W/"private-weak-version"', '', undefined, '*', '"one","two"']) {
+    let writes = 0;
+    const s = store({ getImpl: async (_path, options) => {
+      assert.deepEqual(options.headers, { 'Accept-Encoding': 'identity' });
+      const response = reply(); response.blob.etag = version; return response;
+    }, putImpl: async () => { writes++; return {}; } });
+    await assert.rejects(s.read(), error => error.code === 'STORE_ETAG_INVALID' &&
+      !String(error).includes('private-weak-version') && !String(error).includes(token));
+    assert.equal(writes, 0);
+  }
 });
 
 test('only an explicit missing object is treated as an empty ledger', async () => {
