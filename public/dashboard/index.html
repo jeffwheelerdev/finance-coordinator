@@ -17,18 +17,18 @@
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="#overview" aria-label="Finance Coordinator overview"><img src="/dashboard/mark.svg" width="36" height="36" alt=""><span>Finance<br><strong>Coordinator</strong></span></a>
-      <div class="workspace-label">YOUR FINANCIAL CONTROL ROOM</div>
+      <div class="workspace-label">PERSONAL WORKSPACE</div>
       <nav aria-label="Main navigation">
-        <a href="#overview" data-nav="overview"><span aria-hidden="true">◫</span> Overview</a>
-        <a href="#map" data-nav="map"><span aria-hidden="true">⌁</span> Money map</a>
-        <a href="#activity" data-nav="activity"><span aria-hidden="true">≡</span> Activity & health</a>
-        <a href="#simulator" data-nav="simulator"><span aria-hidden="true">◇</span> Simulator</a>
-        <a href="#settings" data-nav="settings"><span aria-hidden="true">⚙</span> Settings</a>
+        <a href="#overview" data-nav="overview"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg> Overview</a>
+        <a href="#map" data-nav="map"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 8h6v8H3zM15 3h6v6h-6zM15 15h6v6h-6zM9 12h3m3-6h-3v12h3"/></svg> Money map</a>
+        <a href="#activity" data-nav="activity"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2 12h5l3-8 4 16 3-8h5"/></svg> Activity & health</a>
+        <a href="#simulator" data-nav="simulator"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4 19a1 1 0 001 2h14a1 1 0 001-2L14 9V3M7 15h10"/></svg> Simulator</a>
+        <a href="#settings" data-nav="settings"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg> Settings</a>
       </nav>
-      <div class="sidebar-foot"><span class="privacy-dot"></span> Private workspace<p>One plan. A clear record.<br>Every dollar accounted for.</p><span id="software-version" class="version"></span></div>
+      <div class="sidebar-foot"><div class="sidebar-note"><span class="privacy-dot"></span> A place for every dollar.<p>Your plan, your priorities.<br>Clarity at every step.</p></div><div class="sidebar-identity"><span class="owner-mark" aria-hidden="true">FC</span><div>Personal finances<small>Private workspace</small></div><span id="software-version" class="version"></span></div></div>
     </aside>
     <main id="content" tabindex="-1">
-      <header class="topbar"><span class="breadcrumb">Personal finances <span>/</span> <span id="current-section">Overview</span></span><span id="mode-pill" class="pill neutral">Connecting</span></header>
+      <header class="topbar"><span class="breadcrumb">Personal finances <span>/</span> <span id="current-section">Overview</span></span><div class="topbar-status"><span id="snapshot-time" class="snapshot-time"></span><span id="mode-pill" class="pill neutral">Connecting</span></div></header>
       <div id="notice" role="status" aria-live="polite" hidden></div>
       <div id="app"><section class="loading" aria-busy="true"><div class="loading-mark"></div><h1>Opening your control room</h1><p>Loading the saved plan and financial ledger…</p></section></div>
       <noscript><section class="panel"><h1>JavaScript is needed</h1><p>Enable JavaScript to view your private dashboard. Automation runs independently on the server.</p></section></noscript>
