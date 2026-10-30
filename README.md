@@ -1,11 +1,17 @@
 # Finance Coordinator
 
-Version **0.6.2** supports deliberate retirement of the obsolete Sequence Pod
-and native rules, with complete visible-rule checks and preserved audit identities.
-It retains the separate activation-readiness report and offline engine rehearsal.
-The v0.6 allocation policy is unchanged: it funds accounts directly from Income,
-records the cash reserved for each request, and keeps windfalls separate from
-ordinary monthly income.
+Version **0.7.0** adds a private financial control room to the existing monthly
+automation engine: a seven-account money map, transfer milestones, readiness
+checks, redacted diagnostics, a pure what-if simulator, and reviewed settings
+changes with a durable revision history. The dashboard and execution engine
+share the same ledger and allocation policy; no duplicate Sequence rules are
+needed.
+
+The root URL serves the dashboard. See [dashboard](docs/dashboard.md) and
+[private access](docs/dashboard-access.md) for the data contract and deployment
+requirements. Vercel Authentication must protect **All Deployments** before the
+private dashboard API is enabled. Browser sessions never authorize the financial
+execution, webhook, or email setup endpoints.
 
 The new branch is selected with `MONTHLY_PRIORITY_ENABLED=true`. The example
 configuration remains financially inactive: `APP_MODE=observe` and
@@ -15,10 +21,13 @@ proof that money has moved. See [activation](docs/activation.md).
 
 ## Monthly order
 
-All new requests belong to the **1st of the month**, beginning at **15:00 UTC**.
+By default, new requests belong to the **1st of the month**, beginning at **15:00 UTC**.
+The dashboard can set another monthly day (1–28) and an early December day (1–15).
 The calendar is `America/New_York`: 10 a.m. during standard time and 11 a.m.
-during daylight time. The daily cron also checks evidence and follows accepted
-transfers; it does not authorize a second allocation date.
+during daylight time. A single daily cron starts the check and follows accepted transfers. During an
+eligible monthly window, a finite queue of delayed checks provides same-day
+retries; every message expires at New York midnight. These checks do not
+authorize a second allocation date or bypass the current live-transfer gates.
 
 | Priority | Destination | Amount |
 | --- | --- | --- |
@@ -59,7 +68,7 @@ income and a $4,000 windfall uses **$5,000** as the percentage basis. The
 Emergency target is $375 and the Project target is $250 before their cash and
 priority limits. The $4,000 remains in Income as a separate ledger bucket.
 
-Current-year windfalls remain held until the **December 1** cycle. They can
+Current-year windfalls remain held until the **December close** cycle (default **December 1**). They can
 then fill verified same-year Roth shortfalls, followed by recorded Project
 shortfalls, with the remaining eligible windfall going to Personal Investment.
 They do not supplement ordinary Bills or General funding. Late receipts and
@@ -72,7 +81,7 @@ carryforward, annual close, classification, and timing.
 ## Partial Roth funding and alerts
 
 An eligible Roth installment may be partially funded when regular cash is
-short. Its unpaid amount remains a dated obligation for a later 1st in the
+short. Its unpaid amount remains a dated obligation for a later monthly cycle in the
 same tax year, subject to verified annual limits. Project and Personal
 Investment cannot consume cash ahead of an unpaid or unverified Roth
 obligation. Project's ordinary monthly allocation remains its new 5% target;

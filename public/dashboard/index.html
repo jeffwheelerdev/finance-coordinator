@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="same-origin">
+  <meta name="theme-color" content="#102b2b">
+  <title>Finance Coordinator</title>
+  <link rel="icon" type="image/svg+xml" href="/dashboard/mark.svg">
+  <link rel="stylesheet" href="/dashboard/styles.css">
+  <script type="module" src="/dashboard/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="Finance Coordinator overview"><img src="/dashboard/mark.svg" width="36" height="36" alt=""><span>Finance<br><strong>Coordinator</strong></span></a>
+      <div class="workspace-label">YOUR FINANCIAL CONTROL ROOM</div>
+      <nav aria-label="Main navigation">
+        <a href="#overview" data-nav="overview"><span aria-hidden="true">◫</span> Overview</a>
+        <a href="#map" data-nav="map"><span aria-hidden="true">⌁</span> Money map</a>
+        <a href="#activity" data-nav="activity"><span aria-hidden="true">≡</span> Activity & health</a>
+        <a href="#simulator" data-nav="simulator"><span aria-hidden="true">◇</span> Simulator</a>
+        <a href="#settings" data-nav="settings"><span aria-hidden="true">⚙</span> Settings</a>
+      </nav>
+      <div class="sidebar-foot"><span class="privacy-dot"></span> Private workspace<p>One plan. A clear record.<br>Every dollar accounted for.</p><span id="software-version" class="version"></span></div>
+    </aside>
+    <main id="content" tabindex="-1">
+      <header class="topbar"><span class="breadcrumb">Personal finances <span>/</span> <span id="current-section">Overview</span></span><span id="mode-pill" class="pill neutral">Connecting</span></header>
+      <div id="notice" role="status" aria-live="polite" hidden></div>
+      <div id="app"><section class="loading" aria-busy="true"><div class="loading-mark"></div><h1>Opening your control room</h1><p>Loading the saved plan and financial ledger…</p></section></div>
+      <noscript><section class="panel"><h1>JavaScript is needed</h1><p>Enable JavaScript to view your private dashboard. Automation runs independently on the server.</p></section></noscript>
+      <footer>Finance Coordinator <span>•</span> All amounts in USD <span>•</span> Monthly schedule uses America/New_York</footer>
+    </main>
+  </div>
+  <dialog id="review-dialog" aria-labelledby="review-title"></dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { readdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 function reportProviderSimulation(receipt) {
@@ -13,6 +13,9 @@ if (tested.status !== 0) process.exit(tested.status ?? 1);
 try {
   const { runMonthlyRehearsal } = await import('./rehearse-monthly.mjs');
   const rehearsal = await runMonthlyRehearsal();
+  const { makeDashboardRehearsalReceipt } = await import('../lib/dashboard-receipt.mjs');
+  const receipt = makeDashboardRehearsalReceipt(rehearsal, { checkedAt: new Date().toISOString() });
+  writeFileSync(new URL('../lib/generated-rehearsal.mjs', import.meta.url), `export default ${JSON.stringify(receipt)};\n`);
   console.log(JSON.stringify({ component: 'monthly-rehearsal', status: rehearsal.status,
     softwareVersion: rehearsal.softwareVersion, syntheticDataOnly: rehearsal.syntheticDataOnly,
     scenarioCount: rehearsal.scenarioCount, networkAttempts: rehearsal.networkAttempts,

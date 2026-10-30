@@ -85,6 +85,7 @@ schedules, and cannot initiate a contribution.
 Use the reviewed project revision of these files together:
 
 - `lib/roth.mjs`
+- `lib/monthly-schedule.mjs`
 - `lib/roth-monitor.mjs`
 - `scripts/prepare-roth-update.mjs`
 
@@ -126,6 +127,6 @@ preserving all unrelated keys. Read back and validate the saved policy before
 reporting success. An unknown write result must be inspected before any retry.
 
 The daily watch checks for publication changes; it is not the money scheduler.
-The Vercel coordinator independently checks the first-of-month contribution
+The Vercel coordinator independently checks the configured monthly contribution
 and cash evidence. Neither a monitoring run nor a policy update activates
 financial execution or creates historical monthly contributions.

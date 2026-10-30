@@ -1,6 +1,6 @@
 {
   "name": "finance-coordinator",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Monthly priority funding, income-source accounting and annual shortfall recovery for Sequence, staged for deliberate activation.",
@@ -18,7 +18,9 @@
   "dependencies": {
     "@vercel/blob": "2.8.2",
     "@vercel/functions": "3.3.4",
-    "@vercel/global-config": "1.5.1"
+    "@vercel/global-config": "1.5.1",
+    "@vercel/oidc": "3.5.0",
+    "@vercel/queue": "0.10.0"
   },
   "overrides": {
     "@vercel/blob": {

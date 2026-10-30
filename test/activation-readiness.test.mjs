@@ -9,6 +9,7 @@ import { withCalculatedBillsTarget } from '../lib/config.mjs';
 import { initialState } from '../lib/engine.mjs';
 import { monthlyFixture, useSequenceRetirement, START } from './monthly-fixture.mjs';
 import { ID, asISO, makeConfig, makeRothPolicy, transferRecord } from './fixtures.mjs';
+import { prepareDashboardControlUpdate } from '../lib/dashboard-controls.mjs';
 
 async function fixture({ now = START } = {}) {
   const s = monthlyFixture({ mode: 'observe', activationAt: null });
@@ -63,6 +64,20 @@ test('a prepared inactive deployment is distinctly ready for user activation wit
     ...Object.values(s.config.accounts), ...Object.values(s.config.rules), ID(30), ID(41), ID(42)]) assert.equal(output.includes(value), false);
 });
 
+test('readiness checks the saved future date, rates and provider limit against that date\'s settings', async () => {
+  const s = await fixture({ now: Date.parse('2030-01-02T15:00:00.000Z') });
+  const prepared = prepareDashboardControlUpdate({ config: s.config, state: initialState(), expectedRevision: 0,
+    changes: { executionDay: 5, projectRateBasisPoints: 725, emergencyRateBasisPoints: 825 }, now: s.clock.value });
+  s.store.replaceForTest(prepared.state);
+  const result = s.ready();
+  assert.equal(result.readyForActivation, true, JSON.stringify(result.blockers));
+  assert.equal(result.nextCycle.dueAt, '2030-01-05T15:00:00.000Z');
+  assert.equal(result.nextCycle.closesAt, '2030-01-06T05:00:00.000Z');
+  assert.equal(result.nextCycle.settingsRevision, 1);
+  assert.equal(result.checks.find(row => row.id === 'next_cycle_roth_policy').monthlyAmountCents, 62500);
+  assert.equal(s.client.creates.length, 0);
+});
+
 test('successful read checks never turn unverified preparation into a readiness pass', async () => {
   const s = await fixture();
   s.monthlyPolicy.opening = { status: 'unverified' };
@@ -104,6 +119,61 @@ test('a verified opening must actually reconcile, and unresolved classifications
     const s = await fixture(); s.deposit(1000, 'UNREVIEWED RECEIPT'); await s.refreshEvidence();
     const result = s.ready(); has(result, 'INCOME_CLASSIFICATION_REQUIRED');
     assert.equal(result.checks.find(row => row.id === 'income_reconciliation').unknownHeldCents, 1000);
+  });
+});
+
+test('activation requires a reviewed ongoing payroll rule, not only a classified opening or individual overrides', async t => {
+  await t.test('empty ongoing classification', async () => {
+    const s = await fixture(); s.monthlyPolicy.classification.rules = [];
+    const result = s.ready();
+    assert.equal(result.checks.find(row => row.id === 'income_reconciliation').status, 'passed');
+    has(result, 'INCOME_PAYROLL_RULE_UNVERIFIED'); assert.equal(result.readyForActivation, false);
+    const live = { ...s.config, mode: 'live', liveEnabled: true, activationAt: asISO(START) };
+    assert.throws(() => assertActivationReadyForDeployment(live, s.ready({ config: live })), { code: 'ACTIVATION_PREREQUISITES_INCOMPLETE' });
+    assert.equal(s.store.writes.length, 0); assert.equal(s.client.creates.length, 0);
+  });
+  await t.test('single receipt override does not classify future payroll', async () => {
+    const s = await fixture(); s.monthlyPolicy.classification.rules = [];
+    s.monthlyPolicy.classification.overrides = [{ transactionId: ID(800), amountInCents: 100000, regularCents: 100000,
+      windfallCents: 0, verifiedAt: s.monthlyPolicy.updatedAt, reference: 'Private review of one synthetic receipt' }];
+    has(s.ready(), 'INCOME_PAYROLL_RULE_UNVERIFIED');
+  });
+  await t.test('other reviewed income kinds do not stand in for ordinary Navy pay', async () => {
+    const s = await fixture(); s.monthlyPolicy.classification.rules = s.monthlyPolicy.classification.rules.filter(row => row.kind !== 'navy-pay');
+    has(s.ready(), 'INCOME_PAYROLL_RULE_UNVERIFIED');
+  });
+  await t.test('an exact reviewed salary rule suffices without guessed future windfall descriptions', async () => {
+    const s = await fixture(); s.monthlyPolicy.classification.rules = s.monthlyPolicy.classification.rules.filter(row => row.kind === 'navy-pay');
+    const result = s.ready(); assert.equal(result.readyForActivation, true);
+    assert.deepEqual(result.checks.find(row => row.id === 'income_payroll_classification'), {
+      id: 'income_payroll_classification', status: 'passed', reviewedPayrollRuleCount: 1,
+      unmatchedReceiptBehavior: 'hold_and_alert', codes: [],
+    });
+    assert.equal(JSON.stringify(result).includes('REGULAR PAY'), false);
+  });
+});
+
+test('ongoing payroll readiness rejects ambiguous or bonus-bearing signatures but permits disjoint reviewed ranges', async t => {
+  await t.test('overlapping salary and windfall rules', async () => {
+    const s = await fixture(), payroll = s.monthlyPolicy.classification.rules.find(row => row.kind === 'navy-pay');
+    s.monthlyPolicy.classification.rules.push({ ...payroll, id: 'conflicting-receipt', kind: 'windfall',
+      minAmountCents: 100000, maxAmountCents: 100000 });
+    has(s.ready(), 'INCOME_PAYROLL_CLASSIFICATION_AMBIGUOUS');
+  });
+  await t.test('visibly marked bonus is not ongoing ordinary pay', async () => {
+    const s = await fixture(); s.monthlyPolicy.classification.rules.find(row => row.kind === 'navy-pay').descriptionEquals = 'NAVY BONUS';
+    has(s.ready(), 'INCOME_PAYROLL_RULE_UNVERIFIED');
+  });
+  await t.test('zero-only range cannot classify a future credit', async () => {
+    const s = await fixture(); s.monthlyPolicy.classification.rules.find(row => row.kind === 'navy-pay').maxAmountCents = 0;
+    has(s.ready(), 'INCOME_PAYROLL_RULE_UNVERIFIED');
+  });
+  await t.test('separately reviewed disjoint salary ranges have no ambiguous admitted amount', async () => {
+    const s = await fixture(), payroll = s.monthlyPolicy.classification.rules.find(row => row.kind === 'navy-pay');
+    payroll.maxAmountCents = 100000;
+    s.monthlyPolicy.classification.rules.push({ ...payroll, id: 'second-reviewed-pay-range', minAmountCents: 100001, maxAmountCents: 200000 });
+    const result = s.ready(); assert.equal(result.readyForActivation, true);
+    assert.equal(result.checks.find(row => row.id === 'income_payroll_classification').reviewedPayrollRuleCount, 2);
   });
 });
 
@@ -209,6 +279,24 @@ test('a matching permanent activation can receive a code repair while known ACH 
   result = s.ready({ config: changed });
   assert.equal(result.activationEstablished, false); has(result, 'MONTHLY_BINDING_CHANGED');
   assert.throws(() => assertActivationReadyForDeployment(changed, result), { code: 'ACTIVATION_PREREQUISITES_INCOMPLETE' });
+});
+
+test('missing ongoing payroll readiness does not prevent an established repair or settlement of accepted transfers', async () => {
+  const s = await fixture();
+  s.config = makeConfig({ ...s.config, mode: 'live', liveEnabled: true, activationAt: asISO(START - 3600000) });
+  assert.equal((await s.run()).code, 'MONTHLY_TRANSFERS_SUBMITTED');
+  const accepted = s.client.creates.length;
+  s.clock.advance(1000);
+  s.monthlyPolicy.updatedAt = asISO(s.clock.value);
+  s.monthlyPolicy.classification.rules = [];
+  await s.refreshEvidence();
+  const readiness = s.ready(); has(readiness, 'INCOME_PAYROLL_RULE_UNVERIFIED');
+  assert.equal(readiness.activationEstablished, true);
+  assert.doesNotThrow(() => assertActivationReadyForDeployment(s.config, readiness));
+  s.settleAll();
+  assert.equal((await s.run()).code, 'MONTHLY_CYCLE_COMPLETE');
+  assert.equal(s.client.creates.length, accepted);
+  assert.ok(monthlyOwnedTransfers(s.store.value).every(row => row.status === 'COMPLETE'));
 });
 
 test('an established coordinator cannot add retirement visibility through the pending-repair exception', async () => {

@@ -1,27 +1,103 @@
-# Monthly priority policy — v0.6
+# Monthly priority policy
 
 This is the current execution policy when `MONTHLY_PRIORITY_ENABLED=true`.
 It replaces the earlier Pod-refund trigger and independent native savings
-schedule. Every mapped legacy rule must be disabled. The code does not enable
+schedule. Obsolete native rules must be disabled or covered by the explicit
+retirement manifest and complete rule-inventory checks. The code does not enable
 rules, change the account holder's brokerage strategy, or activate itself.
 
 ## One monthly opportunity
 
-New transfers are permitted only on the **1st in America/New_York**, at or after
+New transfers default to the **1st in America/New_York**, at or after
 **15:00 UTC** for that month. This is 10 a.m. in standard time and 11 a.m. in
-daylight time. The daily cron remains scheduled at 15:00 UTC so the coordinator
-can ingest bank evidence, observe accepted transfers, and record exceptions.
+daylight time. The private dashboard can choose a monthly day from 1 through
+28. December has its own early closing day, default 1 and editable from 1
+through 15, to leave time for current-year IRA deposits to settle. A late or
+cross-year settlement still requires reconciliation; choosing an early day
+cannot guarantee settlement by December 31.
+
+One daily cron calls `/api/scheduler` at **15:00 UTC**. The producer reads the
+saved calendar and, when the current monthly window is open, publishes a finite
+set of delayed Queue wake-ups before its immediate reconciliation call. Future
+hourly boundaries provide up to 13 further checks in standard time, ending at
+04:00 UTC, or 12 in daylight time, ending at 03:00 UTC. A delayed initial cron
+can leave fewer remaining opportunities. No additional hourly cron is used.
+
+The closing boundary is actual New York midnight: 04:00 UTC during daylight
+time and 05:00 UTC during standard time. A delayed message expires at that
+boundary, and the consumer checks expiry before calling reconciliation. The
+financial engine independently checks its frozen execution window immediately
+before each financial submission. Requests delayed past local midnight cannot
+open or continue a financial submission.
+
+Queue messages carry only a version, wake kind, execution date, wake time and
+expiry. They contain no transfer amounts, account IDs or financial settings.
+The private `queue/v2beta` consumer does not create transfers or publish more
+messages. It authenticates a call to the canonical current production
+`/api/reconcile` endpoint, so a callback attached to an older deployment cannot
+execute that deployment's financial code. The daily producer also calls this
+endpoint outside the execution day to observe accepted transfers and ingest
+new evidence. All money decisions remain in the current coordinator.
+The implementation follows the official [Queue SDK](https://vercel.com/docs/queues/sdk),
+[private consumers and deployment versioning](https://vercel.com/docs/queues/concepts),
+and [same-project trusted authentication](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/trusted-sources)
+contracts.
+
+These checks resume the same durable cycle and immutable requests. They do not
+recalculate percentages, create a second monthly allowance, replace an unknown
+transfer, or spend later deposits under a completed plan. A recoverable first
+attempt can use a later scheduled check; uncertain transfers whose identity
+cannot be established still require review.
+
+This deployment uses one daily cron on the existing Hobby plan; it does not
+require an hourly cron entitlement or a hosting upgrade. Queue delivery is a
+separate supported platform capability. Its production delivery and canonical
+authentication must be verified; a configured trigger or a local test alone is
+not evidence that a wake reached the current deployment. Vercel's cron timing
+is best effort, and a failed cron invocation is not retried automatically. See
+the official [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing)
+and [cron operation](https://vercel.com/docs/cron-jobs/manage-cron-jobs).
+
+The Queue trigger allows at most three deliveries, with a 300-second retry
+delay for failed delivery. Delayed or repeated deliveries still use the same
+monthly ledger, lease and immutable request identities. Neither the queue nor
+its retries grants another monthly funding allowance. If no eligible wake
+arrives before the window closes, the coordinator records the missed work and
+retains any uncertain request for reconciliation.
 
 The activation cutoff is prospective. If it is later than the month's 15:00 UTC
-slot, the first eligible allocation month is the next month. A deposit on the
-15th, a new paycheck, a policy edit, or a webhook does not create another funding
+slot on the configured day, the first eligible allocation month is the next
+month. The engine permanently records that floor. A later deposit, a new
+paycheck, a policy edit, or a webhook does not create another funding
 opportunity. An accepted ACH transfer may finish later; that does not authorize
 a new off-cycle request.
 
-When a planned request misses the first-day window, it is recorded as missed
+When a planned request misses its chosen day, it is recorded as missed
 instead of submitted late. Accepted transfers keep their existing identities.
 An unknown submission outcome must be reconciled; it cannot be replaced with
 a new request simply because the calendar advanced.
+
+## Editable dashboard controls
+
+The dashboard edits General's monthly budget and reserve months, the explicit
+Income reserve, Emergency's target and percentage, Project's percentage, the
+monthly execution day, and the December closing day. Money is stored as integer
+cents and percentages as integer basis points. The initial values remain
+General `$750 × 3`, Emergency `$10,000` at `7.5%`, and Project `5%`.
+
+Every save includes an expected revision and an audit entry in the same private
+ledger write. A running financial worker or stale revision rejects the save.
+An active installation applies changes next calendar month; inactive staging
+uses the next future opportunity without a frozen plan. A subsequent partial
+edit preserves already-pending values instead of silently replacing them.
+
+Each monthly cycle freezes its settings revision, exact due window, percentage
+basis and transfer plan before any submission. Changing a date cannot reopen a
+completed month, change an existing request, or invent a preactivation Roth
+obligation. Old Project shortfalls retain their original monthly percentage
+targets. IRS limits, personal IRA eligibility, verified contribution totals,
+account identities, opening income classification, the Bills forecast and
+activation switches remain outside these ordinary settings controls.
 
 ## Separate the cash by authorization
 
@@ -30,7 +106,7 @@ Income holds three durable virtual pools:
 | Pool | Meaning | Monthly use |
 | --- | --- | --- |
 | Regular | Verified ordinary income and other specifically authorized regular receipts. | Available to the monthly priority order. |
-| Windfall | Verified bonuses or other receipts assigned to annual allocation. | Held until the December 1 annual-close cycle. |
+| Windfall | Verified bonuses or other receipts assigned to annual allocation. | Held until the December annual-close cycle, default December 1. |
 | Unclassified | Unknown, conflicting, or incompletely verified receipts. | Held until an exact reviewed classification resolves them. |
 
 These are ledger balances inside Income, not new bank accounts or Pods.
@@ -46,6 +122,12 @@ Rules need dated evidence explaining why the classification is appropriate.
 A payroll label such as DFAS or Navy pay is not sufficient evidence that a
 deposit contains no bonus. Ambiguous matches and unrecognized receipts remain
 unclassified; a clearly marked bonus cannot silently pass an ordinary-pay rule.
+Initial activation readiness also requires a reviewed ongoing ordinary-pay
+signature with a positive amount range and no overlapping classification rule.
+A verified opening balance or a one-time transaction override alone cannot
+make future payroll automation ready. Unknown future windfall descriptions need
+not be guessed: unmatched receipts stay reserved and create a critical
+classification alert when financial automation is running.
 
 A completed Emergency→Income return is regular money only when the provider
 transfer and external bank receipt have been explicitly reconciled. Similar
@@ -70,6 +152,9 @@ Emergency percentage target = floor(R × 7.5%) in integer cents
 Project monthly target      = floor(R × 5%) in integer cents
 ```
 
+These are the default rates. Each cycle uses its saved dashboard revision's
+rates; changing a future rate does not recalculate earlier monthly targets.
+
 Store these amounts in the monthly cycle. Later transfers and balance refreshes
 do not change the opening basis or compound the percentages.
 
@@ -86,20 +171,20 @@ Protect `INCOME_RESERVE` once, then allocate the remaining regular cash:
    The private catalog retains annual renewals in their due months.
 2. **General Spending:** fill the gap to
    `GENERAL_SPENDING_MONTHLY_BUDGET × GENERAL_SPENDING_RESERVE_MONTHS`.
-3. **Emergency Fund:** allocate the minimum of its opening 7.5% target, the gap
+3. **Emergency Fund:** allocate the minimum of its opening percentage target (default 7.5%), the gap
    to `EMERGENCY_FUND_TARGET` (default $10,000), and remaining regular cash.
    The gap subtracts its current posted balance and pending incoming transfers;
    a lower available balance caused by a hold does not increase cap room.
 4. **Roth IRA:** allocate up to the verified unpaid eligible monthly obligations
    for the current tax year, remaining annual contribution room, and remaining
    regular cash.
-5. **Project Savings:** allocate up to the current month's opening 5% target and
+5. **Project Savings:** allocate up to the current month's opening percentage target (default 5%) and
    remaining regular cash, after the Roth obligation has been satisfied.
 6. **Personal Investment:** sweep eligible remaining regular cash after the
    prior steps and protected reserves.
 
 There is no month-end regular sweep. Personal Investment is the last allocation
-in the same 1st-of-month cycle. Missing higher-priority evidence does not make
+in the same monthly cycle, defaulting to the 1st. Missing higher-priority evidence does not make
 the corresponding cash surplus.
 
 A nonzero shortfall creates an actionable alert. An unverified Roth obligation
@@ -128,7 +213,7 @@ accepted, pending, uncertain, and completed requests constrain annual room.
 
 If a monthly target cannot be fully funded, the eligible partial amount can be
 submitted and the unpaid portion remains attached to its original month.
-A later **1st in the same year** can pay that obligation alongside the new month's
+A later **scheduled monthly day in the same year** can pay that obligation alongside the new month's
 target. The engine attributes money to older eligible obligations first.
 
 This carryforward does not create an off-cycle debit, rewrite an earlier
@@ -139,11 +224,11 @@ blocks new Roth funding until reconciled.
 
 ## Project history and December windfalls
 
-Each Project obligation records its own month's frozen 5% target. Ordinary
+Each Project obligation records its own month's frozen percentage target. Ordinary
 monthly regular allocations fund the current month's target; they do not add
 all historical Project shortfalls to the next regular-income request.
 
-On **December 1**, current-year held windfalls may address verified same-year
+On the configured **December closing day** (default December 1), current-year held windfalls may address verified same-year
 shortfalls in this order:
 
 1. Unpaid eligible Roth monthly obligations, within remaining annual IRA room.
@@ -154,7 +239,7 @@ The windfall pool does not backfill Bills, General, or Emergency allocations.
 If essential targets or required annual evidence are unresolved, the affected
 windfall stays held. An unknown historical Project target cannot be assumed zero.
 
-December 1 is the annual-close opportunity, not a December 31 sweep. Windfalls
+The chosen December day is the annual-close opportunity. Windfalls
 received afterward have no extra off-cycle opportunity under this policy.
 When they become prior-year held cash, they require review; they are not
 automatically rolled into the following year's windfall budget.

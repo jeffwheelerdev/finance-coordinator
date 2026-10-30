@@ -51,6 +51,22 @@ test('a verified full annual budget produces twelve $625 installments and an eli
   assert.deepEqual(result.blockers, []);
 });
 
+test('a dashboard calendar changes due dates without changing annual cents or bypassing activation', () => {
+  const schedule = { executionDay: 28, decemberDay: 10 };
+  const early = forecast(policy(), { now: '2030-11-01T15:00:00.000Z', schedule });
+  assert.ok(early.blockers.includes('ROTH_MONTH_NOT_DUE'));
+  assert.equal(early.dueAt, '2030-11-28T15:00:00.000Z');
+  assert.equal(early.amountInCents, 0);
+  const ready = forecast(policy(), { now: '2030-11-28T15:00:00.000Z', schedule, ownReservedCents: 700000 });
+  assert.equal(ready.amountInCents, 50000);
+  assert.equal(ready.monthlyAmountCents, 62500);
+  assert.equal(ready.installments[11].dueAt, '2030-12-10T15:00:00.000Z');
+  assert.equal(ready.installments.reduce((sum, row) => sum + row.amountCents, 0), 750000);
+  const after = forecast(policy(), { now: '2030-11-28T16:00:00.000Z', activationAt: '2030-11-28T15:00:00.001Z', schedule });
+  assert.ok(after.blockers.includes('ROTH_MONTH_PREDATES_ACTIVATION'));
+  assert.equal(after.amountInCents, 0);
+});
+
 test('unknown personal evidence previews the base limit without authorizing a contribution', () => {
   const result = forecast(policy({ statutoryLimits: [statutory(2026)], years: [unknownYear(2026)] }), {
     now: '2026-11-01T15:00:00Z', activationAt: null,

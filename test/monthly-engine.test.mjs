@@ -109,6 +109,74 @@ test('preview and forced observation cannot claim a plan, reserve money, or send
   });
 });
 
+test('durable run history records observed and blocked checks without raw errors or financial identities', async () => {
+  const s = fixture({ mode: 'observe' });
+  assert.equal((await s.run()).code, 'READ_ONLY_MONTHLY_PLAN');
+  s.clock.advance(1000);
+  assert.equal((await s.run({ dependencies: { readMonthlyEvidence: async () => {
+    throw new Error('PRIVATE PROVIDER BODY AND CREDENTIAL');
+  } } })).code, 'INTERNAL_ERROR');
+  const history = s.store.value.monthly.runHistory;
+  assert.deepEqual(history.map(row => [row.mode, row.status, row.code, row.submittedCount, row.settledCount]), [
+    ['observe', 'observe', 'READ_ONLY_MONTHLY_PLAN', 0, 0], ['observe', 'blocked', 'INTERNAL_ERROR', 0, 0],
+  ]);
+  assert.equal(history[1].at, asISO(s.clock.value)); assert.equal(history[1].monthKey, '2030-01');
+  const serialized = JSON.stringify(history);
+  assert.equal(serialized.includes('PRIVATE'), false);
+  for (const id of Object.values(s.config.accounts)) assert.equal(serialized.includes(id), false);
+  assert.deepEqual(s.store.value.monthly.cycles, {}); assert.deepEqual(s.store.value.monthly.obligations, {});
+  assert.equal(s.sent.length, 0); noMoney(s);
+});
+
+test('run history separates confirmed acceptance from settlement and unknown request outcomes', async () => {
+  const s = fixture({ regular: 40000, bills: 50000, general: 300000, emergency: 1000000 });
+  s.client.onCreate = intent => { s.client.acceptIntent(intent); throw new Error('Synthetic accepted response lost'); };
+  assert.equal((await s.run()).code, 'MONTHLY_SUBMISSION_UNKNOWN');
+  assert.deepEqual([s.store.value.monthly.runHistory.at(-1).submittedCount, s.store.value.monthly.runHistory.at(-1).settledCount], [0, 0]);
+  assert.equal(s.store.value.monthly.runHistory.at(-1).status, 'uncertain');
+  s.client.onCreate = null; s.clock.advance(61000); s.refresh();
+  assert.equal((await s.run()).code, 'MONTHLY_UNKNOWN_OUTGOING');
+  assert.equal(s.client.creates.length, 1);
+  assert.deepEqual([s.store.value.monthly.runHistory.at(-1).submittedCount, s.store.value.monthly.runHistory.at(-1).settledCount], [0, 0]);
+
+  const known = fixture({ regular: 40000, bills: 50000, general: 300000, emergency: 1000000 });
+  await known.run();
+  assert.deepEqual([known.store.value.monthly.runHistory.at(-1).submittedCount, known.store.value.monthly.runHistory.at(-1).settledCount], [1, 0]);
+  assert.equal(known.store.value.monthly.runHistory.at(-1).status, 'pending');
+  await known.run();
+  assert.deepEqual([known.store.value.monthly.runHistory.at(-1).submittedCount, known.store.value.monthly.runHistory.at(-1).settledCount], [0, 0]);
+  known.settleAll(); assert.equal((await known.run()).code, 'MONTHLY_CYCLE_COMPLETE');
+  assert.deepEqual([known.store.value.monthly.runHistory.at(-1).submittedCount, known.store.value.monthly.runHistory.at(-1).settledCount], [0, 1]);
+  await known.run();
+  assert.deepEqual([known.store.value.monthly.runHistory.at(-1).submittedCount, known.store.value.monthly.runHistory.at(-1).settledCount], [0, 0]);
+});
+
+test('run history accepts older ledgers and retains only the latest hundred finalized checks', async () => {
+  const s = fixture({ mode: 'observe' }); await s.run();
+  const row = structuredClone(s.store.value.monthly.runHistory[0]);
+  delete s.store.value.monthly.runHistory;
+  assert.equal(validateMonthlyState(s.store.value), s.store.value);
+  await s.run(); assert.equal(s.store.value.monthly.runHistory.length, 1);
+  const earlier = Array.from({ length: 100 }, (_, index) => ({ ...row, at: asISO(s.clock.value - (100 - index) * 1000) }));
+  s.store.value.monthly.runHistory = structuredClone(earlier);
+  await s.run();
+  assert.equal(s.store.value.monthly.runHistory.length, 100);
+  assert.deepEqual(s.store.value.monthly.runHistory[0], earlier[1]);
+  assert.equal(s.store.value.monthly.runHistory.at(-1).at, s.store.value.lastRun.at);
+  assert.deepEqual(s.store.value.monthly.cycles, {}); noMoney(s);
+});
+
+test('unbounded or malformed run records fail ledger validation before financial execution', async () => {
+  const s = fixture({ mode: 'observe' }); await s.run();
+  const baseline = structuredClone(s.store.value), row = baseline.monthly.runHistory[0];
+  for (const history of [null, {}, Array.from({ length: 101 }, () => row), [{ ...row, rawError: 'PRIVATE' }],
+    [{ ...row, code: 'Private error with spaces' }], [{ ...row, submittedCount: -1 }], [{ ...row, settledCount: 0.5 }],
+    [{ ...row, at: '2030-02-30T00:00:00.000Z' }], [{ ...row, status: 'successful' }]]) {
+    const changed = structuredClone(baseline); changed.monthly.runHistory = history;
+    assert.throws(() => validateMonthlyState(changed), error => error.code === 'MONTHLY_RUN_HISTORY_INVALID');
+  }
+});
+
 test('partial Roth uses available normal cash, records the deficit once, and immediately queues a deduplicated alert', async () => {
   const s = fixture({ regular: 100000, bills: 50000, general: 300000, emergency: 1000000 });
   s.config = makeConfig({ ...s.config, incomeReserveCents: 50000 });
@@ -193,7 +261,7 @@ test('December close routes windfalls to Roth then Project then Personal and rec
 
 test('a missed first records Roth arrears and unknown Project history but never sends on a later day', async () => {
   const s = fixture(); s.advance('2030-01-02T15:00:00.000Z');
-  assert.equal((await s.run()).code, 'MONTHLY_FIRST_DAY_ONLY');
+  assert.equal((await s.run()).code, 'MONTHLY_EXECUTION_DAY_ONLY');
   noMoney(s);
   assert.deepEqual(s.store.value.monthly.obligations['2030-01'], { rothTargetCents: 62500, projectTargetCents: null });
   assert.ok(s.sent.some(row => row.code === 'MONTHLY_CYCLE_MISSED'));
@@ -252,7 +320,7 @@ test('unknown requests cannot replay on the second, while known requests remain 
   assert.equal((await s.run()).code, 'MONTHLY_RECOVERY_WINDOW_CLOSED');
   assert.equal(cycle(s).children.bills.status, 'REVIEW'); assert.equal(s.client.creates.length, 1);
   const known = fixture(); await known.run(); known.advance('2030-01-02T15:00:00.000Z'); known.settleAll();
-  assert.equal((await known.run()).code, 'MONTHLY_FIRST_DAY_ONLY');
+  assert.equal((await known.run()).code, 'MONTHLY_EXECUTION_DAY_ONLY');
   assert.ok(Object.values(cycle(known).children).every(child => ['COMPLETE', 'NOOP'].includes(child.status)));
   assert.equal(known.client.creates.length, 6);
 });

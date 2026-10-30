@@ -219,12 +219,18 @@ Apply environment changes through a verified deployment;
 do not alter an already built deployment.
 
 The cutoff is a lower bound, not a promise to transfer at that instant.
-Activation after a month's first-day 15:00 UTC slot starts eligibility the next
-month. Preserve the recorded cutoff, account bindings, and ledger permanently.
+Activation after a month's configured 15:00 UTC slot starts eligibility at the
+next eligible monthly slot. Preserve the recorded cutoff, account bindings, and ledger permanently.
 Existing live legacy events need a reviewed migration.
 
-The cron calls reconciliation daily at 15:00 UTC. New monthly requests are
-allowed only on New York's first day from that time onward. Later checks observe
+One daily cron calls `/api/scheduler` at 15:00 UTC. It invokes the current
+canonical reconciliation endpoint and, during the eligible window, queues a
+bounded set of delayed same-day checks. The private queue consumer calls that
+current endpoint rather than executing an older deployment's financial logic.
+A separate health-only probe verifies queue delivery and protected self-access
+while money is off. See [scheduler](scheduler.md). New monthly requests are
+allowed only on the configured New York execution day from that time onward
+(default day 1). Later checks observe
 accepted transfers, update evidence, and report missed work. There is no 15th
 allocation, deposit-triggered refill, or month-end regular sweep.
 
@@ -240,7 +246,7 @@ IDs, original requests, idempotency keys, and ledger records.
 
 An unknown transfer outcome stops later submissions. Recovery preserves the
 exact request/key, remains within 23 hours of the first attempt, and must still
-fit the same first-day window. Outside those limits, inspect provider evidence
+fit the same frozen monthly window. Outside those limits, inspect provider evidence
 before a reviewed repair. Never erase a ledger entry or send a replacement
 with a new key merely to clear an error.
 

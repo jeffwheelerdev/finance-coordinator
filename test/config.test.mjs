@@ -47,7 +47,7 @@ test('required configuration has no financial or account defaults', () => {
 
 test('target derives from configurable budget and reserve months, without a fixed target', () => {
   const config = loadConfig(env());
-  assert.equal(VERSION, '0.6.2');
+  assert.equal(VERSION, '0.7.0');
   assert.equal(general(config).monthlyBudgetCents, 123456);
   assert.equal(general(config).targetCents, 370368);
   assert.equal(config.allocations[0].id, 'bills');
@@ -231,7 +231,9 @@ test('Roth is an independently configured investment destination, never a refund
   assert.equal(configured.liveEnabled, false);
   assert.notEqual(configured.configHash, baseline.configHash);
   const summary = summarizeConfig(configured);
-  assert.equal(summary.roth.schedule, 'first_of_month');
+  assert.equal(summary.roth.schedule, 'monthly_configured_day');
+  assert.equal(summary.roth.executionDay, 1);
+  assert.equal(summary.roth.decemberDay, 1);
   assert.equal(summary.roth.checkHourUTC, 15);
   assert.equal(JSON.stringify(summary).includes(uuid(30)), false);
 });

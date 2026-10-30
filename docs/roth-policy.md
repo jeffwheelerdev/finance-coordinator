@@ -124,7 +124,7 @@ requests for the same year, including accepted, uncertain and settled requests.
 When rechecking an uncertain request, it excludes that request itself from the
 aggregate before deciding whether its unchanged amount still fits.
 
-Ordinary monthly Roth shortfalls are retained for later 1st-of-month cycles in
+Ordinary monthly Roth shortfalls are retained for later scheduled monthly cycles in
 the same year. Project and Personal Investment cannot consume cash ahead of an
 unpaid or unverified Roth obligation. In December's annual-close cycle, held
 current-year windfalls can help fund those obligations before Project catch-up

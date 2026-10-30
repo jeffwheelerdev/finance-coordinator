@@ -1,4 +1,4 @@
-# Configuration — v0.6.2
+# Configuration — v0.7.0
 
 Real account bindings, recipients, credentials, and financial policy belong in
 private production settings. The [example file](../.env.example) uses synthetic
@@ -31,10 +31,28 @@ available to previews.
 | `FINANCE_ALLOCATIONS_JSON` | Keep `[]` for the current fixed monthly order. Legacy extra recipients are rejected in monthly mode. |
 
 Every monthly role, including the excluded Pod, must have a distinct account
-identity. Rule identities must also be distinct. Monthly mode currently fixes
-7.5% Emergency, 5% Project, the 15:00 UTC first-day window, and December as the
-annual windfall-close month. These are reviewed policy choices, not undocumented
-environment variables.
+identity. Rule identities must also be distinct. Monthly mode defaults to
+7.5% Emergency, 5% Project, and day 1. The private dashboard can update the
+General budget/reserve months, Income reserve, Emergency target/rate, Project
+rate, execution day (1–28), and December day (1–15). These controls are versioned
+in the existing ledger, not written back to environment variables. The 15:00 UTC
+opening time, New York calendar, priority order, and December annual-close month
+remain fixed. Started cycles retain their frozen settings.
+
+## Private dashboard
+
+Set `DASHBOARD_ENABLED=true` and
+`DASHBOARD_ACCESS_POLICY=vercel-all-deployments` only after checking the actual
+Vercel protection and authorized audience. The production canonical host must
+reject anonymous access. Dashboard sessions use the existing server-side
+`CRON_SECRET` as a signing root, with separate derived keys, HttpOnly cookies,
+same-origin request checks and CSRF protection. The key is never sent to the
+browser. Dashboard cookies do not authorize financial execution.
+
+Settings saves require the exact current revision and reject an active worker
+lease. The UI previews the effective month on the server before saving; an
+expired preview cannot silently move the change to a different month. See
+[dashboard access](dashboard-access.md) and [dashboard behavior](dashboard.md).
 
 Money is represented internally as exact integer cents. Invalid numeric
 formats, fractional cents, and unsafe arithmetic are rejected.

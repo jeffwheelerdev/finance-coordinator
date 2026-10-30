@@ -177,3 +177,21 @@ settled-refund and native-savings behavior for historical compatibility.
 Those native-rule requirements do not apply to the new monthly execution path.
 An existing financial ledger needs reviewed migration; clearing it would remove
 the evidence that prevents duplicate requests.
+
+## Private dashboard and scheduled wakeups (v0.7)
+
+The dashboard reads the same private ledger as execution. Browser sessions are
+scoped to a narrow dashboard API behind Vercel All Deployments authentication;
+they cannot authenticate reconciliation, webhooks, or alert sending. Settings
+preview is pure. Saving adds a versioned controls revision with an exact CAS and
+preserves financial state. Each started cycle freezes its settings and window.
+
+A daily cron invokes the scheduler. On the configured monthly day, a finite
+queue of delayed checks can wake the current canonical coordinator before New
+York midnight. Queue consumers have no financial client. They use runtime OIDC
+and the existing server-side bearer secret to call the currently deployed
+guarded endpoint, so deployment pinning cannot preserve obsolete live behavior.
+The separate scheduler probe visits only health and records a bounded receipt.
+
+See [dashboard](dashboard.md), [access](dashboard-access.md), and
+[scheduler](scheduler.md). There are no duplicate native Sequence funding rules.

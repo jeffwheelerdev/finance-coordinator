@@ -30,6 +30,25 @@ test('$9,000 split into $5,000 regular plus $4,000 windfall uses only the regula
   assert.deepEqual(plan.blockers, []);
 });
 
+test('reviewed basis-point edits preserve exact cents, strict priorities and frozen historical Project targets', () => {
+  assert.deepEqual(monthlyPercentageTargets(1234567, { emergencyRateBasisPoints: 825, projectRateBasisPoints: 625 }),
+    { emergencyCents: 101851, projectCents: 77160 });
+  for (const value of [-1, 1.5, 10001, '750']) {
+    assert.throws(() => monthlyPercentageTargets(100000, { emergencyRateBasisPoints: value }), { code: 'MONTHLY_PLAN_RATE_INVALID' });
+  }
+  const input = fixture({ monthKey: '2026-12', firstEligibleMonth: '2026-11', emergencyRateBasisPoints: 1000, projectRateBasisPoints: 750,
+    roth: { eligible: true, annualRemainingCents: 62500, months: [obligation('2026-11', 62500, 62500), obligation('2026-12', 62500)] },
+    project: { months: [obligation('2026-11', 25000), obligation('2026-12', 37500)] } });
+  const plan = planMonthlyFunding(input);
+  assert.deepEqual(plan.percentageTargets, { emergencyCents: 50000, projectCents: 37500 });
+  assert.deepEqual(amounts(plan), [100000, 100000, 50000, 62500, 62500, 525000]);
+  assert.equal(line(plan, 'project-savings').regularCents, 37500);
+  assert.equal(line(plan, 'project-savings').windfallCents, 25000);
+  assert.equal(plan.project.annualTargetCents, 62500);
+  assert.deepEqual(monthlyPercentageTargets(100000, { emergencyRateBasisPoints: 0, projectRateBasisPoints: 0 }),
+    { emergencyCents: 0, projectCents: 0 });
+});
+
 test('Bills outrank General and essential shortfalls hold annual-close windfalls', () => {
   const plan = planMonthlyFunding(fixture({ monthKey: '2026-12', firstEligibleMonth: '2026-12',
     availableRegularCents: 150000,

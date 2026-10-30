@@ -226,7 +226,8 @@ test('a fully reviewed synthetic setup can be ready while both execution switche
   assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.status, 'ready_for_user_activation');
   assert.equal(body.readyForActivation, true); assert.equal(body.executionEnabled, false); assert.equal(body.activationEstablished, false);
   assert.deepEqual(body.blockers, []); assert.ok(body.checks.every(check => check.status === 'passed'));
-  assert.deepEqual(body.nextCycle, { year: 2030, monthKey: '2030-02', dueAt: '2030-02-01T15:00:00.000Z', timeZone: 'America/New_York' });
+  assert.deepEqual(body.nextCycle, { year: 2030, monthKey: '2030-02', dueAt: '2030-02-01T15:00:00.000Z',
+    closesAt: '2030-02-02T05:00:00.000Z', dayOfMonth: 1, settingsRevision: 0, timeZone: 'America/New_York' });
   assert.deepEqual(body.activationChanges.map(change => change.setting), ['APP_MODE', 'LIVE_TRANSFERS_ENABLED', 'AUTOMATION_START_AT']);
   assert.equal(body.recheckAtActivation, true);
   assert.equal(s.env.APP_MODE, 'observe'); assert.equal(s.env.LIVE_TRANSFERS_ENABLED, 'false');
@@ -398,7 +399,7 @@ test('a second-day invocation cannot create the missed monthly transfers', async
   s.bills.bills_monitor.checkedAt = asISO(s.clock.value);
   for (const account of s.client.accounts.values()) if (account.balance?.balanceLastUpdatedAt) account.balance.balanceLastUpdatedAt = asISO(s.clock.value - 1000);
   const response = await s.app.fetch(s.request('/api/reconcile')), body = await response.json();
-  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.code, 'MONTHLY_FIRST_DAY_ONLY');
+  assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.code, 'MONTHLY_EXECUTION_DAY_ONLY');
   assert.equal(s.client.creates.length, 0);
   assert.ok(s.emails.some(alert => alert.code === 'MONTHLY_CYCLE_MISSED'));
 });

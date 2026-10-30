@@ -4,21 +4,153 @@
   "buildCommand": "npm run build",
   "installCommand": "npm ci --ignore-scripts",
   "functions": {
-    "api/index.mjs": { "maxDuration": 300 }
+    "api/index.mjs": {
+      "maxDuration": 300
+    },
+    "api/scheduler.mjs": {
+      "maxDuration": 300
+    },
+    "api/queue-wake.mjs": {
+      "maxDuration": 300,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "finance-coordinator-wakes-v1",
+          "retryAfterSeconds": 300,
+          "maxDeliveries": 3
+        }
+      ]
+    }
   },
   "rewrites": [
-    { "source": "/", "destination": "/api/index?route=health" },
-    { "source": "/api/health", "destination": "/api/index?route=health" },
-    { "source": "/api/status", "destination": "/api/index?route=status" },
-    { "source": "/api/preflight", "destination": "/api/index?route=preflight" },
-    { "source": "/api/readiness", "destination": "/api/index?route=readiness" },
-    { "source": "/api/plan", "destination": "/api/index?route=plan" },
-    { "source": "/api/bills", "destination": "/api/index?route=bills" },
-    { "source": "/api/roth", "destination": "/api/index?route=roth" },
-    { "source": "/api/monthly", "destination": "/api/index?route=monthly" },
-    { "source": "/api/alerts", "destination": "/api/index?route=alerts" },
-    { "source": "/api/reconcile", "destination": "/api/index?route=reconcile" },
-    { "source": "/api/webhook", "destination": "/api/index?route=webhook" }
+    {
+      "source": "/",
+      "destination": "/dashboard/index.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/dashboard/index.html"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index?route=health"
+    },
+    {
+      "source": "/api/status",
+      "destination": "/api/index?route=status"
+    },
+    {
+      "source": "/api/preflight",
+      "destination": "/api/index?route=preflight"
+    },
+    {
+      "source": "/api/readiness",
+      "destination": "/api/index?route=readiness"
+    },
+    {
+      "source": "/api/plan",
+      "destination": "/api/index?route=plan"
+    },
+    {
+      "source": "/api/bills",
+      "destination": "/api/index?route=bills"
+    },
+    {
+      "source": "/api/roth",
+      "destination": "/api/index?route=roth"
+    },
+    {
+      "source": "/api/monthly",
+      "destination": "/api/index?route=monthly"
+    },
+    {
+      "source": "/api/alerts",
+      "destination": "/api/index?route=alerts"
+    },
+    {
+      "source": "/api/reconcile",
+      "destination": "/api/index?route=reconcile"
+    },
+    {
+      "source": "/api/webhook",
+      "destination": "/api/index?route=webhook"
+    },
+    {
+      "source": "/api/alerts/test",
+      "destination": "/api/index?route=alerts/test"
+    },
+    {
+      "source": "/api/dashboard",
+      "destination": "/api/index?route=dashboard"
+    },
+    {
+      "source": "/api/dashboard/activity",
+      "destination": "/api/index?route=dashboard/activity"
+    },
+    {
+      "source": "/api/dashboard/debug",
+      "destination": "/api/index?route=dashboard/debug"
+    },
+    {
+      "source": "/api/dashboard/simulate",
+      "destination": "/api/index?route=dashboard/simulate"
+    },
+    {
+      "source": "/api/dashboard/settings",
+      "destination": "/api/index?route=dashboard/settings"
+    },
+    {
+      "source": "/api/dashboard/settings/preview",
+      "destination": "/api/index?route=dashboard/settings/preview"
+    },
+    {
+      "source": "/api/dashboard/diagnostics",
+      "destination": "/api/index?route=dashboard/diagnostics"
+    },
+    {
+      "source": "/api/dashboard/scheduler-test",
+      "destination": "/api/index?route=dashboard/scheduler-test"
+    }
   ],
-  "crons": [{ "path": "/api/reconcile", "schedule": "0 15 * * *" }]
+  "crons": [
+    {
+      "path": "/api/scheduler",
+      "schedule": "0 15 * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), payment=()"
+        },
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow, noarchive"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ]
 }
