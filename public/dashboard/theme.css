@@ -112,3 +112,24 @@ footer { color: #62708a; }
 footer span { color: #9aa7bf; }
 #toast { background: #4f628c; color: #fff; }
 #notice { border-color: #ecdfbf; }
+
+/* The owner's plan is explained in their own context, using current settings. */
+.brand strong { font-size: 23px; letter-spacing: -.8px; }
+.personal-plan { background: #fafbfe; border-color: #dce4f2; }
+.personal-priorities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.personal-priorities>div+div { border-left: 1px solid var(--line); padding-left: 24px; }
+.personal-step { display: block; font-size: 9px; font-weight: 600; letter-spacing: 1.2px; color: #60708e; margin-bottom: 9px; }
+.personal-priorities h3 { font-size: 14px; letter-spacing: -.2px; margin-bottom: 8px; }
+.personal-priorities p { font-size: 12px; line-height: 1.8; }
+.personal-plan-note { font-size: 11px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--line); }
+.account-purpose { font-size: 11px; line-height: 1.7; min-height: 38px; margin: -3px 0 10px; }
+@media(max-width:1000px) {
+  .personal-priorities { grid-template-columns: 1fr; gap: 18px; }
+  .personal-priorities>div+div { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 18px; }
+}
+@media(max-width:800px) { .brand strong { font-size: 17px; letter-spacing: -.4px; } }
+@media(max-width:600px) {
+  .account-purpose { font-size: 10px; min-height: 51px; }
+  .personal-priorities p { font-size: 12px; }
+  .personal-plan .panel-head { margin-bottom: 15px; }
+}
