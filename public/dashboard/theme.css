@@ -1,0 +1,135 @@
+/* Soft daylight palette. Large surfaces stay neutral; color identifies actions.
+   Semantic success, warning and error colors remain distinct from navigation. */
+:root {
+  --ink: #29354d;
+  --muted: #5f6c84;
+  --line: #dfe4ee;
+  --paper: #f6f7fb;
+  --white: #fff;
+  --accent: #5067a7;
+  --accent-hover: #40578f;
+  --accent-soft: #e5ebf8;
+  --surface-soft: #f0f3f9;
+  --sidebar: #edf0f7;
+  --hero: #e8edf9;
+  --hero-ink: #30446c;
+  --hero-muted: #596b8a;
+  --success: #347262;
+  --success-soft: #e8f3ef;
+  --amber: #8a5f1c;
+  --amber-bg: #fff5e3;
+  --red: #a3434e;
+  --red-bg: #fbeef0;
+  --shadow: 0 4px 24px #29354d06;
+  /* Compatibility aliases for the existing component styles. */
+  --green: var(--accent);
+  --mint: var(--accent-soft);
+  --nav: var(--sidebar);
+}
+
+/* Navigation uses a light surface, including at the mobile breakpoint. */
+.sidebar { background: var(--sidebar); color: var(--ink); border-right: 1px solid var(--line); }
+.workspace-label, .version { color: var(--muted); }
+.sidebar nav a { color: #5e6b83; }
+.sidebar nav a:hover { background: #e2e8f3; color: #354d82; }
+.sidebar nav a[aria-current=page], .sidebar nav a[aria-current=page]:hover {
+  background: #dce5f7; color: #40598f; box-shadow: 0 2px 6px #5067a708;
+}
+.sidebar-note { background: #ffffff80; border-color: #dce2ee; color: #4d5d79; }
+.sidebar-note p, .sidebar-identity small { color: var(--muted); }
+.sidebar-identity { border-color: #d9e0ed; color: var(--ink); }
+.owner-mark { background: #dde5f5; color: #5067a7; }
+.privacy-dot { background: #6c82b8; }
+
+/* Low-contrast fills with legible text, rather than large dark blocks. */
+.liquidity-card, .income-node {
+  background: var(--hero); color: var(--hero-ink); border: 1px solid #d7e0f3;
+  box-shadow: 0 4px 20px #5067a706;
+}
+.liquidity-card:before, .liquidity-card:after { border-color: #8fa5d125; }
+.hero-kicker, .income-node .node-kicker { color: #51648b; }
+.hero-kicker .account-icon { background: #dbe4f6; color: #526aa8; }
+.hero-currency { background: #f2f5fc; border-color: #cbd7ed; color: #586b91; }
+.hero-caption, .hero-pools span, .income-node .subtle { color: var(--hero-muted); }
+.hero-pools { border-color: #ccd7ed; }
+.hero-link { color: #405b96; }
+.hero-link:hover { color: #304778; }
+.pool-list { border-color: #ccd7ed; color: var(--hero-muted); }
+.pool-list .amount { color: var(--hero-ink); }
+.income-node:after { color: #536b9a; }
+
+/* Controls and financial indicators share one restrained accent family. */
+.button:hover { background: #f0f3fa; border-color: #bdc9e2; }
+.button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+.button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.button.quiet:hover { background: transparent; }
+.eyebrow, .schedule-kicker, .account-order { color: #606e89; }
+.calendar-icon { background: #edf1fa; color: #6277aa; }
+.pill.neutral { background: #edf0f6; color: #5a6780; }
+.pill.good, .check-dot.good { background: var(--success-soft); color: var(--success); }
+.banner { background: #eff2fa; border-color: #dde4f4; }
+.banner .banner-icon { background: #e0e7f7; color: #5e75ad; }
+.banner.warning { background: var(--amber-bg); border-color: #ecdfbf; }
+.banner.warning .banner-icon { background: #f6e9c8; color: var(--amber); }
+.banner.error { background: var(--red-bg); border-color: #ecd4d8; }
+.banner.error .banner-icon { background: #f4dfe3; color: var(--red); }
+.mini-account { background: var(--white); border-color: var(--line); }
+.mini-account:hover { border-color: #becbe4; box-shadow: 0 4px 12px #5067a707; }
+.mini-account .target-line { border-color: #e9edf5; color: #5e6f92; }
+.account-icon { background: #eaf0fa; color: #627baa; }
+.account-icon.role-bills { background: #eaf0fb; color: #5b76ad; }
+.account-icon.role-general { background: #e9f1f5; color: #5c8195; }
+.account-icon.role-emergency { background: #f7f0e4; color: #9a793d; }
+.account-icon.role-roth { background: #f0ecf8; color: #8570a6; }
+.account-icon.role-project { background: #eaf0fa; color: #617ca3; }
+.account-icon.role-personalInvestment { background: #f7ece8; color: #a27964; }
+.progress { background: #eaf0f8; }
+.progress span { background: #8299c7; }
+.priority { background: #eaf0fb; color: #5a74a8; }
+.map-lines path { stroke: #9aadd1; }
+.map-lines marker path { fill: #9aadd1; stroke: none; }
+.map-lines path.return { stroke: #b08d53; }
+.legend i { border-color: #a1b1cd; }
+.legend .green { border-color: #718bb9; }
+.map-note, .diagnostic-summary { background: var(--surface-soft); border-color: var(--line); }
+.empty-icon { color: #8194b8; }
+.check-list li, .annual-item+.annual-item { border-color: #e9edf5; }
+.table-wrap, .table-wrap td { border-color: #e7ebf3; }
+th { background: #f2f4f9; color: #62728f; }
+td { border-color: #e9edf5; }
+.computed { background: #f0f3fa; border-color: #dfe6f4; }
+.field input, .field select { border-color: #c8d1e3; }
+.field input:disabled { background: #f1f3f8; }
+.field input:focus, .field select:focus { border-color: #6d84bc; outline-color: #8095c3; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline-color: #607bb6; }
+.loading-mark { border-color: #dce4f4; border-top-color: #6e88bd; }
+.spinner-inline { border-color: #c5d1e9; border-top-color: currentColor; }
+.bar-column .bar { background: #c2cfe9; }
+.bar-column .bar.peak { background: #7892c1; }
+dialog { box-shadow: 0 20px 80px #29354d26; }
+dialog::backdrop { background: #3d486c66; }
+footer { color: #62708a; }
+footer span { color: #9aa7bf; }
+#toast { background: #4f628c; color: #fff; }
+#notice { border-color: #ecdfbf; }
+
+/* The owner's plan is explained in their own context, using current settings. */
+.brand strong { font-size: 23px; letter-spacing: -.8px; }
+.personal-plan { background: #fafbfe; border-color: #dce4f2; }
+.personal-priorities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.personal-priorities>div+div { border-left: 1px solid var(--line); padding-left: 24px; }
+.personal-step { display: block; font-size: 9px; font-weight: 600; letter-spacing: 1.2px; color: #60708e; margin-bottom: 9px; }
+.personal-priorities h3 { font-size: 14px; letter-spacing: -.2px; margin-bottom: 8px; }
+.personal-priorities p { font-size: 12px; line-height: 1.8; }
+.personal-plan-note { font-size: 11px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--line); }
+.account-purpose { font-size: 11px; line-height: 1.7; min-height: 38px; margin: -3px 0 10px; }
+@media(max-width:1000px) {
+  .personal-priorities { grid-template-columns: 1fr; gap: 18px; }
+  .personal-priorities>div+div { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 18px; }
+}
+@media(max-width:800px) { .brand strong { font-size: 17px; letter-spacing: -.4px; } }
+@media(max-width:600px) {
+  .account-purpose { font-size: 10px; min-height: 51px; }
+  .personal-priorities p { font-size: 12px; }
+  .personal-plan .panel-head { margin-bottom: 15px; }
+}
