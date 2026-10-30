@@ -71,6 +71,94 @@ function fixture() {
 
 const rejects = (work, code) => assert.rejects(work, error => error?.code === code);
 
+function retiringFixture() {
+  const s = fixture();
+  const { emergencyFallback, ...mapped } = s.config.rules;
+  s.config.rules = { ...mapped, excess: emergencyFallback };
+  s.config.monthly.sequenceRetirement = { schemaVersion: 1, authorizedAt: '2030-01-31T15:00:00.000Z',
+    reference: 'Synthetic user-authorized cleanup', podAccountId: s.config.accounts.pod,
+    rules: { payout: s.config.rules.payout, funding: s.config.rules.funding, legacyGeneral: s.config.rules.legacyGeneral, excess: s.config.rules.excess } };
+  s.inventory = () => [...s.rules.values()].map(row => ({ isSupported: true,
+    createdAt: '2029-12-01T00:00:00.000Z', updatedAt: '2030-01-31T12:00:00.000Z', ...row }));
+  s.client.listRules = async () => { s.calls.push({ method: 'listRules' });
+    return { items: clone(s.inventory()), complete: true, unfiltered: true }; };
+  return s;
+}
+
+test('retirement stages with disabled archives and then tolerates absence without claiming deletion', async () => {
+  const s = retiringFixture(); let result = await s.read();
+  assert.equal(result.nativeRuleInventory.presentDisabledCount, 4); assert.equal(result.nativeRuleInventory.absentCount, 0);
+  assert.equal(s.calls.some(row => row.method === 'getRule'), false);
+  s.rules.clear(); result = await s.read();
+  assert.ok(Object.values(result.nativeRuleStatuses).every(status => status === 'ABSENT'));
+  assert.equal(result.nativeRuleInventory.absentCount, 4); assert.equal(result.nativeRuleInventory.explicitlyDeletedCount, 0);
+  assert.equal(result.nativeRuleInventory.visibility, 'not_inferred_from_listing');
+  assert.equal(s.calls.some(row => row.id === s.config.accounts.pod), false);
+});
+
+test('only an explicit valid provider deletion timestamp is reported as DELETED', async () => {
+  const s = retiringFixture(); s.rules.get(s.config.rules.funding).deletedAt = '2030-01-31T14:00:00.000Z';
+  const result = await s.read(); assert.equal(result.nativeRuleStatuses.funding, 'DELETED');
+  assert.equal(result.nativeRuleInventory.explicitlyDeletedCount, 1); assert.equal(result.nativeRuleInventory.presentDisabledCount, 3);
+});
+
+test('retirement never treats authentication errors, generic 404s, timeouts or partial listing as successful cleanup', async t => {
+  for (const code of ['ACCESS_DENIED', 'UNAUTHORIZED', 'HTTP_ERROR', 'RESOURCE_NOT_FOUND', 'REQUEST_TIMEOUT']) await t.test(code, async () => {
+    const s = retiringFixture(); s.client.listRules = async () => { throw Object.assign(new Error('Synthetic read failure'), { code }); };
+    await rejects(s.read(), code); assert.equal(s.calls.some(row => row.method === 'listTransfers'), false);
+  });
+  for (const change of [{ complete: false }, { unfiltered: false }]) await t.test(JSON.stringify(change), async () => {
+    const s = retiringFixture(); s.client.listRules = async () => ({ items: [], complete: true, unfiltered: true, ...change });
+    await rejects(s.read(), 'MONTHLY_RULE_INVENTORY_INCOMPLETE');
+  });
+});
+
+test('authorized retirement still blocks reenabled old rules and newly active competing routes', async t => {
+  await t.test('old enabled rule', async () => {
+    const s = retiringFixture(); s.rules.get(s.config.rules.payout).status = 'ENABLED';
+    await rejects(s.read(), 'MONTHLY_LEGACY_RULE_ENABLED');
+  });
+  for (const touched of [roles.income, roles.emergency, roles.roth, ID(8)]) await t.test(touched, async () => {
+    const s = retiringFixture(); s.rules.set(ID(900), { id: ID(900), status: 'ENABLED', deletedAt: null,
+      steps: [{ actions: [{ source: { id: ID(901) }, destination: { id: touched } }] }] });
+    await rejects(s.read(), 'MONTHLY_CONFLICTING_NATIVE_RULE_ENABLED');
+    assert.equal(s.calls.some(row => row.method === 'listTransfers'), false);
+  });
+  await t.test('uninspectable active rule', async () => {
+    const s = retiringFixture(); s.rules.set(ID(900), { id: ID(900), status: 'ENABLED', deletedAt: null, isSupported: false });
+    await rejects(s.read(), 'MONTHLY_ACTIVE_RULE_UNVERIFIED');
+    assert.equal(s.calls.some(row => row.method === 'getRule'), false);
+  });
+  await t.test('independent active rule', async () => {
+    const s = retiringFixture(); s.rules.set(ID(900), { id: ID(900), status: 'ENABLED', deletedAt: null,
+      steps: [{ actions: [{ source: { id: ID(901) }, destination: { id: ID(902) } }] }] });
+    assert.equal((await s.read()).nativeRuleInventory.unrelatedActiveCount, 1);
+  });
+});
+
+test('a completed historical transfer may name only the exact retired deleted Pod and still constrains balance freshness', async () => {
+  const s = retiringFixture();
+  const historical = s.transfer({ source: { id: s.config.accounts.pod, type: 'POD', isDeleted: true }, destination: actor(roles.income),
+    status: 'COMPLETE', createdAt: '2030-01-31T10:00:00.000Z', completedAt: '2030-01-31T12:00:00.000Z' }, false);
+  assert.equal((await s.read()).transfers[0].source.isDeleted, true);
+  historical.completedAt = '2030-02-01T14:59:00.000Z';
+  await rejects(s.read(), 'WAITING_FOR_POST_SETTLEMENT_BALANCE');
+});
+
+test('retirement never relaxes pending actors, current financial roles, other deleted Pods or actor types', async t => {
+  const cases = [
+    { source: { id: ID(8), type: 'POD', isDeleted: true }, status: 'PENDING' },
+    { source: { id: ID(8), type: 'EXTERNAL_ACCOUNT', isDeleted: true } },
+    { source: { id: ID(90), type: 'POD', isDeleted: true } },
+    { source: { id: roles.emergency, type: 'EXTERNAL_ACCOUNT', isDeleted: true } },
+  ];
+  for (const patch of cases) await t.test(JSON.stringify(patch), async () => {
+    const s = retiringFixture(); s.transfer({ destination: actor(roles.income), status: 'COMPLETE',
+      completedAt: '2030-02-01T14:30:00.000Z', ...patch }, false);
+    await rejects(s.read(), 'MONTHLY_TRANSFER_HISTORY_INVALID');
+  });
+});
+
 test('monthly evidence reads every live role and disabled rule without using the Pod or a refund', async () => {
   const s = fixture(), evidence = await s.read();
   assert.equal(evidence.sourceBalanceCents, 900000);

@@ -1,4 +1,4 @@
-# Staged setup, activation, and operation — v0.6.1
+# Staged setup, activation, and operation — v0.6.2
 
 The repository and its tests prepare the monthly coordinator. They do not
 activate financial automation, exercise a real transfer, or prove a real email
@@ -12,28 +12,31 @@ Blob ledger. Scope real credentials to Production. Preview and historical
 deployment URLs must not share financial write authority.
 
 Set `MONTHLY_PRIORITY_ENABLED=true` with the exact private account mappings.
-Retain the four-account and three-rule JSON shapes; add the separate Emergency,
-Project, Personal Investment, and Emergency excess-rule variables documented in
-[configuration](configuration.md). Every mapped old Sequence rule must be
-**DISABLED**, including native Income allocation, Pod payout, legacy General
-top-up, and the old Emergency excess rule. The monthly branch must be the only
-coordinator for these allocations.
+Use the account and historical-rule mappings documented in
+[configuration](configuration.md), including the separate Emergency, Project,
+and Personal Investment roles. Every old native rule still present must be
+**DISABLED**. The monthly branch must be the only coordinator for these allocations.
 
 The four native rules have been renamed `ARCHIVED … DO NOT ENABLE` and use
 manual triggers. Their historical actions remain, but the old 1st/15th and
 Pod-arrival triggers have been removed. They are not the monthly coordinator
 and must not be enabled as part of activation.
 
-Do not delete the old Pod merely to satisfy this version. Its existence is
-compatible with monthly mode; it is excluded from the new routing. Existing
-funds, pending transfers, or earlier live coordinator history must be reconciled
-rather than silently abandoned.
+For authorized cleanup, deploy with the reviewed `MONTHLY_SEQUENCE_RETIREMENT_JSON`
+manifest before removing the obsolete rules or Pod. It preserves the old IDs as
+audit references and distinguishes present disabled rules, explicit provider
+deletion, and absence from the visible inventory. Follow the
+[Sequence cleanup procedure](sequence-integration.md#cleanup-order). Existing
+funds, holds, pending transfers, and earlier history must be reconciled first.
+Missing or failed reads are never a generic substitute for retirement evidence.
 
 Keep the existing private Sequence key; no replacement is requested. It already
 has transfer authority. Preparation must establish and record its unattended
 approval setting, exact permitted pairs, and amount limits, alongside reads for
 the relevant account roles, transfer history, external Income transactions, and
-mapped rules. The required monthly pairs are:
+mapped rules. Retirement-mode activation also requires reviewed `READ_RULES`
+permission for the entire inventory, recorded as `sequenceAuthority.readAllRules:true`.
+The required monthly pairs are:
 
 | Source | Destinations |
 | --- | --- |
@@ -196,7 +199,8 @@ After that instruction:
 
 1. Refetch current account, rule, bank-history, private-policy, and operational
    evidence. Confirm the official IRS limit and personal IRA records for the
-   next eligible cycle's year. Keep all four native archives disabled.
+   next eligible cycle's year. Keep any remaining native archives disabled and
+   verify retirement inventory and visibility evidence where configured.
 2. Run the offline rehearsal and production read-only checks. Require no
    unfinished prerequisites in `/api/readiness`; inspect `/api/plan` and
    `/api/preflight` alongside it. These checks do not move money or send mail.
@@ -208,7 +212,7 @@ After that instruction:
    build gate. Keep the same reviewed credentials, private policies, and ledger.
 5. Verify the current canonical production deployment's version, effective
    gates, cutoff, next cycle, and readiness response. Check that the native
-   archives remain disabled; enabling them is not part of this procedure.
+   archives are disabled or retired as authorized; enabling them is not part of this procedure.
 
 Apply environment changes through a verified deployment;
 [Vercel environment changes](https://vercel.com/docs/environment-variables/managing-environment-variables)

@@ -2,11 +2,63 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reconcileMonthly, previewMonthly, summarizeMonthlyState, summarizeMonthlyRoth, monthlyOwnedTransfers, validateMonthlyState } from '../lib/monthly-engine.mjs';
 import { initialState } from '../lib/engine.mjs';
-import { monthlyFixture as fixture, START } from './monthly-fixture.mjs';
+import { monthlyFixture as fixture, useSequenceRetirement, START } from './monthly-fixture.mjs';
 import { ID, asISO, makeConfig, transferRecord, StoreConflict } from './fixtures.mjs';
 
 const cycle = (s, key = '2030-01') => s.store.value.monthly.cycles[key];
 const noMoney = s => assert.equal(s.client.creates.length, 0);
+
+test('retirement inventory with all four archives absent executes the identical six-leg monthly financial plan', async () => {
+  const original = fixture(), retired = useSequenceRetirement(fixture(), { absent: true });
+  retired.client.accounts.delete(retired.config.accounts.pod);
+  assert.equal((await original.run()).code, 'MONTHLY_TRANSFERS_SUBMITTED');
+  assert.equal((await retired.run()).code, 'MONTHLY_TRANSFERS_SUBMITTED');
+  assert.deepEqual(retired.client.creates.map(row => row.request), original.client.creates.map(row => row.request));
+  assert.deepEqual(cycle(retired).plan.allocations, cycle(original).plan.allocations);
+  assert.equal(retired.client.creates.length, 6);
+  assert.equal(retired.client.calls.some(row => row.method === 'getRule'), false);
+  assert.equal(retired.client.calls.some(row => row.method === 'getAccount' && row.id === retired.config.accounts.pod), false);
+  assert.match(retired.store.value.monthly.retirementBindingHash, /^[a-f0-9]{64}$/);
+});
+
+test('invalid retirement and a new competing active rule cause no initial ledger writes or financial requests', async t => {
+  await t.test('mismatched archived identity', async () => {
+    const s = useSequenceRetirement(fixture()); s.config.monthly.sequenceRetirement.rules.funding = ID(99);
+    assert.equal((await s.run()).code, 'MONTHLY_RETIREMENT_BINDING_MISMATCH');
+    noMoney(s); assert.equal(s.store.writes.length, 0); assert.equal(s.client.calls.length, 0);
+  });
+  await t.test('new active native route', async () => {
+    const s = useSequenceRetirement(fixture()); s.client.rules.set(ID(900), { id: ID(900), status: 'ENABLED', deletedAt: null,
+      steps: [{ actions: [{ source: { id: s.config.accounts.income }, destination: { id: ID(901) } }] }] });
+    assert.equal((await s.run()).code, 'MONTHLY_CONFLICTING_NATIVE_RULE_ENABLED');
+    noMoney(s); assert.equal(s.store.writes.length, 0); assert.equal(s.sent.length, 0);
+  });
+});
+
+test('introducing retirement preserves existing monthly bindings, completed intents and prior plans', async () => {
+  const s = fixture(); await s.run(); s.settleAll(); await s.run();
+  const previous = structuredClone(cycle(s)), binding = s.store.value.monthly.bindingHash;
+  const keys = s.client.creates.map(row => row.idempotencyKey);
+  useSequenceRetirement(s, { absent: true });
+  s.advance('2030-02-01T15:00:00.000Z'); s.deposit(300000);
+  assert.equal((await s.run()).code, 'MONTHLY_TRANSFERS_SUBMITTED');
+  assert.equal(s.store.value.monthly.bindingHash, binding); assert.deepEqual(cycle(s), previous);
+  assert.deepEqual(s.client.creates.slice(0, keys.length).map(row => row.idempotencyKey), keys);
+  assert.match(s.store.value.monthly.retirementBindingHash, /^[a-f0-9]{64}$/);
+  s.config.monthly.sequenceRetirement = null;
+  assert.equal((await s.run()).code, 'MONTHLY_RETIREMENT_CHANGED');
+});
+
+test('known accepted transfers remain observable after a conflicting native rule appears', async () => {
+  const s = useSequenceRetirement(fixture()); await s.run();
+  const requested = s.client.creates.length;
+  s.client.rules.set(ID(900), { id: ID(900), status: 'ENABLED', deletedAt: null,
+    steps: [{ actions: [{ source: { id: ID(901) }, destination: { id: s.config.accounts.bills } }] }] });
+  s.settleAll();
+  assert.equal((await s.run()).code, 'MONTHLY_CONFLICTING_NATIVE_RULE_ENABLED');
+  assert.equal(s.client.creates.length, requested);
+  assert.ok(monthlyOwnedTransfers(s.store.value).every(row => row.status === 'COMPLETE'));
+});
 
 test('one frozen monthly plan reserves strict priorities before multiple independently pending transfers', async () => {
   const s = fixture();

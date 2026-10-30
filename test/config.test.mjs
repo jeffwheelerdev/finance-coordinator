@@ -47,7 +47,7 @@ test('required configuration has no financial or account defaults', () => {
 
 test('target derives from configurable budget and reserve months, without a fixed target', () => {
   const config = loadConfig(env());
-  assert.equal(VERSION, '0.6.1');
+  assert.equal(VERSION, '0.6.2');
   assert.equal(general(config).monthlyBudgetCents, 123456);
   assert.equal(general(config).targetCents, 370368);
   assert.equal(config.allocations[0].id, 'bills');

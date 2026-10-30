@@ -1,4 +1,4 @@
-# Configuration — v0.6.1
+# Configuration — v0.6.2
 
 Real account bindings, recipients, credentials, and financial policy belong in
 private production settings. The [example file](../.env.example) uses synthetic
@@ -14,12 +14,13 @@ available to previews.
 | `MONTHLY_PRIORITY_ENABLED` | Exactly `true` or `false`; defaults to `false` for legacy compatibility. Set `true` for the current monthly policy. This is not an activation flag. |
 | `RUN_SEQUENCE_SIMULATION` | Optional explicit provider-test flag. Only `true` enables the separate runner, and only with `APP_MODE=observe` and `LIVE_TRANSFERS_ENABLED=false`. Leave absent/`false` normally; remove or reset after the authorized inactive build. It cannot enable real transfers. |
 | `AUTOMATION_START_AT` | Prospective timezone-qualified ISO cutoff; required in live mode. Preserve the recorded value after activation. |
-| `FINANCE_ACCOUNT_IDS_JSON` | Exactly the four legacy keys `income`, `pod`, `general`, `bills`, with distinct provider UUIDs. The Pod mapping remains for identity/migration checks and is excluded from monthly routing. |
-| `FINANCE_RULE_IDS_JSON` | Exactly `payout`, `funding`, `legacyGeneral`, with distinct UUIDs. These archived manual rules must remain disabled in monthly mode. |
+| `FINANCE_ACCOUNT_IDS_JSON` | `income`, `general`, `bills`, and normally the legacy `pod`, with distinct UUIDs. In explicit monthly retirement mode, the manifest retains the Pod identity and the operational JSON may omit `pod`. |
+| `FINANCE_RULE_IDS_JSON` | Normally exactly `payout`, `funding`, `legacyGeneral`, with distinct UUIDs. In monthly retirement mode the manifest supplies retired identities; supplied legacy mappings must match. Remaining old rules must stay disabled. |
+| `MONTHLY_SEQUENCE_RETIREMENT_JSON` | Optional monthly-only authorization manifest with exact historical Pod/rule IDs, timestamp, and reference. Enables complete visible-rule inventory checks and retirement-compatible evidence. It does not delete provider resources or activate transfers. See [Sequence integration](sequence-integration.md). |
 | `EMERGENCY_ACCOUNT_ID` | Exact Emergency cash-account UUID; required in monthly mode. Adds the internal `accounts.emergency` role. |
 | `PROJECT_ACCOUNT_ID` | Exact Project cash-account UUID; required in monthly mode. |
 | `PERSONAL_INVESTMENT_ACCOUNT_ID` | Exact Personal Investment destination UUID; required in monthly mode. Must be an investment account capable of receiving funds. |
-| `EMERGENCY_EXCESS_RULE_ID` | Exact fourth legacy excess-return rule UUID; required in monthly mode and must also be disabled. Adds the internal `rules.excess` role. |
+| `EMERGENCY_EXCESS_RULE_ID` | Exact fourth legacy excess-return rule UUID; the retirement manifest can supply it. Any supplied value must match. A remaining old rule must stay disabled. |
 | `ROTH_ENABLED` | Configures Roth. Monthly priority mode requires `true`; it does not establish annual personal eligibility. |
 | `ROTH_ACCOUNT_ID` | Exact privately attested Roth investment destination UUID. |
 | `GENERAL_SPENDING_MONTHLY_BUDGET` | Arbitrary nonnegative dollar string, at most two decimal places. |
@@ -140,6 +141,7 @@ record contains only `status`. Verified records require these exact fields:
 | `sequenceAuthority` | `status:"verified"`, `verifiedAt`, private `reference`, `automaticApproval`, `accountPairs`, `maxAmountCents`. |
 | `accountPairs[]` | Exactly `sourceAccountId` and `destinationAccountId`; distinct valid UUIDs for each directional pair. Include Income→Bills, General, Emergency, Roth, Project, Personal Investment, and Emergency→Income. |
 | `automaticApproval` | A boolean recording the existing key's reviewed ability to execute without individual human approval. Readiness requires `true`; setting this field does not change provider controls. |
+| `readAllRules` | Optional boolean for backward compatibility, but must be verified `true` before initial activation in retirement mode. Records that the existing key can read the whole native-rule inventory; completing pagination alone does not prove unrestricted permission. |
 | `maxAmountCents` | An integer of at least 100 for the reviewed common conservative cap, or `null` only when absence of an amount cap has been verified. For differing pair caps, use a bound no greater than any required pair's cap. Do not use `null` for an unknown limit. |
 | `emailDelivery` | `status:"verified"`, `verifiedAt`, private `reference`, `provider:"resend"`, `recipient`, `sender`, `providerAccepted:true`, `recipientConfirmed:true`. Both successful provider acceptance and actual recipient receipt must be supported. |
 

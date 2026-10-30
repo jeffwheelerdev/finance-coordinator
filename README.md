@@ -1,7 +1,8 @@
 # Finance Coordinator
 
-Version **0.6.1** prepares the monthly Sequence coordinator for deliberate
-activation, with a separate readiness report and an offline engine rehearsal.
+Version **0.6.2** supports deliberate retirement of the obsolete Sequence Pod
+and native rules, with complete visible-rule checks and preserved audit identities.
+It retains the separate activation-readiness report and offline engine rehearsal.
 The v0.6 allocation policy is unchanged: it funds accounts directly from Income,
 records the cash reserved for each request, and keeps windfalls separate from
 ordinary monthly income.
@@ -37,10 +38,11 @@ The Emergency target gap subtracts both its current posted balance and pending
 incoming transfers. A hold that lowers available cash does not create additional
 room under the Emergency cap.
 
-The routing Pod and its refund event are not part of this branch. All four
-mapped legacy Sequence rules are archived, manual-only, and disabled. They
-preserve historical actions; they do not manage the current monthly logic and
-must stay disabled. An Emergency balance above its target can produce a
+The routing Pod and its refund event are not part of this branch. Any remaining
+legacy Sequence rules must stay disabled. A reviewed retirement manifest allows
+their removal while retaining historical identities and detecting conflicting
+active native rules. See [Sequence integration and cleanup](docs/sequence-integration.md);
+the manifest itself does not remove provider resources. An Emergency balance above its target can produce a
 separately recorded Emergency→Income excess return; that incoming transfer is
 not spendable before settlement and reconciliation.
 
@@ -130,6 +132,7 @@ established. See the [activation runbook](docs/activation.md#4-activate-prospect
 | [Configuration](docs/configuration.md) | Private variables, policy records, and account bindings. |
 | [Architecture](docs/architecture.md) | Evidence, durable reservations, retries, and operational limits. |
 | [Activation](docs/activation.md) | Staged checks, email readiness, deliberate activation, and recovery. |
+| [Sequence integration](docs/sequence-integration.md) | Native canvas meaning, direct-transfer coordination, and safe retirement of obsolete rules and the Pod. |
 | [Rehearsal receipt](docs/monthly-rehearsal.json) | Deterministic synthetic scenarios and their results; no live financial data. |
 | [Bills monitor](docs/bills-monitor.md) | Private catalog evidence and automatic forecast updates. |
 | [Roth policy](docs/roth-policy.md) | Personal tax-year ceilings, contribution history, and route evidence. |

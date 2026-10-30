@@ -1,6 +1,6 @@
 {
   "name": "finance-coordinator",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "description": "Monthly priority funding, income-source accounting and annual shortfall recovery for Sequence, staged for deliberate activation.",

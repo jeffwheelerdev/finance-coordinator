@@ -7,7 +7,7 @@ export const START = Date.parse('2030-01-01T15:00:00.000Z');
 export function monthlyFixture({ regular = 1000000, windfall = 0, emergency = 900000, bills = 10000, general = 100000,
   mode = 'live', activationAt = '2030-01-01T14:00:00.000Z', rothVerified = true } = {}) {
   const s = scenario({ mode, liveEnabled: mode === 'live', activationAt,
-    accounts: { emergency: ID(40) }, rules: { emergencyReturn: ID(14) },
+    accounts: { emergency: ID(40) }, rules: { excess: ID(14) },
     roth: { enabled: true, accountId: ID(30) },
     monthly: { enabled: true, timeZone: 'America/New_York', dueHourUTC: 15, annualCloseMonth: 12,
       emergencyTargetCents: 1000000, emergencyRateBasisPoints: 750, projectRateBasisPoints: 500,
@@ -80,5 +80,20 @@ export function monthlyFixture({ regular = 1000000, windfall = 0, emergency = 90
     s.clock.advance(1000); s.refresh();
   };
   s.advance = at => { s.clock.value = Date.parse(at); s.refresh(); };
+  return s;
+}
+
+export function useSequenceRetirement(s, { absent = false } = {}) {
+  s.config.monthly.sequenceRetirement = { schemaVersion: 1, authorizedAt: asISO(s.clock.value - 1000),
+    reference: 'Synthetic explicit retirement authorization', podAccountId: s.config.accounts.pod,
+    rules: { payout: s.config.rules.payout, funding: s.config.rules.funding,
+      legacyGeneral: s.config.rules.legacyGeneral, excess: s.config.rules.excess } };
+  if (absent) s.client.rules.clear();
+  s.client.listRules = async () => {
+    s.client.calls.push({ method: 'listRules' });
+    return { complete: true, unfiltered: true, items: structuredClone([...s.client.rules.values()].map(row => ({
+      isSupported: true, createdAt: asISO(s.clock.value - 86400000), updatedAt: asISO(s.clock.value - 1000), ...row,
+    }))) };
+  };
   return s;
 }

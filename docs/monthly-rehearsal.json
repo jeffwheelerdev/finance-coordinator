@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "suite": "monthly-activation-rehearsal-v1",
-  "softwareVersion": "0.6.1",
+  "softwareVersion": "0.6.2",
   "status": "passed",
   "deterministic": true,
   "syntheticDataOnly": true,

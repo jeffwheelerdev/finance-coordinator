@@ -7,7 +7,7 @@ import { incomeScanFrom } from '../lib/income-ledger.mjs';
 import { forecastBills } from '../lib/bills.mjs';
 import { withCalculatedBillsTarget } from '../lib/config.mjs';
 import { initialState } from '../lib/engine.mjs';
-import { monthlyFixture, START } from './monthly-fixture.mjs';
+import { monthlyFixture, useSequenceRetirement, START } from './monthly-fixture.mjs';
 import { ID, asISO, makeConfig, makeRothPolicy, transferRecord } from './fixtures.mjs';
 
 async function fixture({ now = START } = {}) {
@@ -73,6 +73,26 @@ test('successful read checks never turn unverified preparation into a readiness 
   assert.equal(result.readChecks, 'passed'); assert.equal(result.readyForActivation, false); assert.equal(result.status, 'blocked');
   for (const code of ['INCOME_OPENING_UNVERIFIED', 'ROTH_PERSONAL_ELIGIBILITY_UNVERIFIED', 'SEQUENCE_AUTHORITY_UNVERIFIED', 'EMAIL_DELIVERY_UNVERIFIED']) has(result, code);
   assert.equal(result.blockers.includes('ROTH_ROUTE_UNVERIFIED'), false);
+});
+
+test('retirement inventory absence never proves deletion or all-rules visibility by itself', async () => {
+  const s = await fixture(); useSequenceRetirement(s, { absent: true }); await s.refreshEvidence();
+  let result = s.ready();
+  has(result, 'SEQUENCE_RULE_VISIBILITY_UNVERIFIED'); assert.equal(result.readyForActivation, false);
+  const guard = result.checks.find(row => row.id === 'legacy_rules_disabled');
+  assert.equal(guard.status, 'passed'); assert.equal(guard.absentCount, 4);
+  assert.equal(guard.explicitlyDeletedCount, 0); assert.equal(guard.absenceProvesDeletion, false);
+  s.readinessEvidence.sequenceAuthority.readAllRules = true;
+  result = s.ready(); assert.equal(result.readyForActivation, true, JSON.stringify(result.blockers));
+  const output = JSON.stringify(result);
+  assert.equal(output.includes(s.config.monthly.sequenceRetirement.reference), false);
+  assert.equal(output.includes(s.config.accounts.pod), false);
+});
+
+test('a generic missing-rule status cannot bypass the guard without explicit retirement authorization', async () => {
+  const s = await fixture();
+  s.evidence.nativeRuleStatuses.funding = 'ABSENT';
+  has(s.ready(), 'MONTHLY_LEGACY_RULES_UNVERIFIED');
 });
 
 test('a verified opening must actually reconcile, and unresolved classifications stay visible', async t => {
@@ -189,4 +209,22 @@ test('a matching permanent activation can receive a code repair while known ACH 
   result = s.ready({ config: changed });
   assert.equal(result.activationEstablished, false); has(result, 'MONTHLY_BINDING_CHANGED');
   assert.throws(() => assertActivationReadyForDeployment(changed, result), { code: 'ACTIVATION_PREREQUISITES_INCOMPLETE' });
+});
+
+test('an established coordinator cannot add retirement visibility through the pending-repair exception', async () => {
+  const s = await fixture();
+  s.config = makeConfig({ ...s.config, mode: 'live', liveEnabled: true, activationAt: asISO(START - 3600000) });
+  await s.run();
+  assert.equal(s.store.value.monthly.retirementBindingHash, undefined);
+  useSequenceRetirement(s); await s.refreshEvidence();
+  let result = s.ready(); assert.equal(result.activationEstablished, true);
+  has(result, 'SEQUENCE_RULE_VISIBILITY_UNVERIFIED');
+  assert.throws(() => assertActivationReadyForDeployment(s.config, result), { code: 'ACTIVATION_PREREQUISITES_INCOMPLETE' });
+  s.readinessEvidence.sequenceAuthority.readAllRules = true;
+  result = s.ready(); has(result, 'MONTHLY_TRANSFER_UNRESOLVED');
+  assert.doesNotThrow(() => assertActivationReadyForDeployment(s.config, result));
+  // A future repair also cannot use an old readiness pass if visibility is no
+  // longer attested, regardless of the financial activation binding.
+  s.readinessEvidence.sequenceAuthority.readAllRules = false;
+  assert.throws(() => assertActivationReadyForDeployment(s.config, s.ready()), { code: 'ACTIVATION_PREREQUISITES_INCOMPLETE' });
 });

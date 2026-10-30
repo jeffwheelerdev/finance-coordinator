@@ -25,6 +25,43 @@ test('reviewed permission and inbox evidence round trips without leaking or infe
   assert.equal(parseActivationPolicy(limited).sequenceAuthority.maxAmountCents, 100000);
 });
 
+test('legacy verified authority remains valid without inventing permission to read every rule', async () => {
+  const original = verified();
+  for (const input of [original, JSON.stringify(original)]) {
+    const parsed = parseActivationPolicy(input);
+    assert.deepEqual(parsed, original);
+    assert.equal(Object.hasOwn(parsed.sequenceAuthority, 'readAllRules'), false);
+  }
+  const result = await resolveActivationPolicy({ monthly: { enabled: true } }, { now: NOW,
+    getAll: async () => ({ activation_policy: original }) });
+  assert.equal(result.readinessEvidenceError, null);
+  assert.equal(Object.hasOwn(result.readinessEvidence.sequenceAuthority, 'readAllRules'), false);
+});
+
+test('explicit read-all-rules scope preserves both true and false through parsing and source resolution', async () => {
+  for (const readAllRules of [true, false]) {
+    const original = verified(); original.sequenceAuthority.readAllRules = readAllRules;
+    for (const input of [original, JSON.stringify(original)]) {
+      const parsed = parseActivationPolicy(input);
+      assert.deepEqual(parsed, original);
+      assert.equal(parsed.sequenceAuthority.readAllRules, readAllRules);
+    }
+    const result = await resolveActivationPolicy({ monthly: { enabled: true } }, { now: NOW,
+      getAll: async () => ({ activation_policy: original }) });
+    assert.equal(result.readinessEvidenceError, null);
+    assert.equal(result.readinessEvidence.sequenceAuthority.readAllRules, readAllRules);
+  }
+});
+
+test('read-all-rules scope rejects nonboolean values instead of coercing authority', async t => {
+  const cases = [['string true', 'true'], ['string false', 'false'], ['number one', 1], ['number zero', 0],
+    ['null', null], ['present undefined', undefined], ['object', {}], ['array', []]];
+  for (const [label, value] of cases) await t.test(label, () => {
+    const policy = verified(); policy.sequenceAuthority.readAllRules = value;
+    assert.throws(() => parseActivationPolicy(policy), { code: 'ACTIVATION_AUTHORITY_INVALID' });
+  });
+});
+
 test('authority rejects malformed, duplicate, self, or subminimum pair definitions', async t => {
   const cases = [
     value => { value.sequenceAuthority.accountPairs = []; },

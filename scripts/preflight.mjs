@@ -25,6 +25,10 @@ export async function verifyDeployment(env = process.env) {
     status: checks.readiness.status, readyForActivation: checks.readiness.readyForActivation,
     activationEstablished: checks.readiness.activationEstablished, nextCycle: checks.readiness.nextCycle,
     blockers: checks.readiness.blockers }));
+  if (config.monthly?.enabled) console.log(JSON.stringify({ component: 'sequence-retirement',
+    configured: Boolean(config.monthly.sequenceRetirement),
+    monthlyBindingPresent: checks.ledger.monthlyBindingPresent,
+    inventory: checks.nativeRuleInventory, ruleStatuses: checks.rules }));
   assertActivationReadyForDeployment(config, checks.readiness);
   const observation = await (config.monthly?.enabled ? reconcileMonthly : reconcile)({ config, client, store, forceObserve: true, ...roth, ...monthly });
   const stagedMonthlyBlocker = config.monthly?.enabled && config.mode === 'observe' && !config.liveEnabled &&

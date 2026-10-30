@@ -61,6 +61,44 @@ function page(items, number, hasNextPage, extra = {}) {
   return { items, pagination: { page: number, pageSize: 100, hasNextPage }, ...extra };
 }
 
+const ruleSummary = (id, changes = {}) => ({ id, status: 'DISABLED', isSupported: true, deletedAt: null,
+  createdAt: '2029-12-01T00:00:00.000Z', updatedAt: '2030-01-01T00:00:00.000Z', ...changes });
+
+test('rule retirement inventory uses complete unfiltered pagination without inventing organization-wide authority', async () => {
+  const calls = [];
+  const adapter = client(async (url, options) => {
+    calls.push({ url: new URL(url), options });
+    return json(page(calls.length === 1 ? [ruleSummary(ID(700))] : [ruleSummary(ID(701), { isSupported: false })], calls.length, calls.length === 1));
+  });
+  const result = await adapter.listRules();
+  assert.equal(result.complete, true); assert.equal(result.unfiltered, true); assert.equal(result.items.length, 2);
+  assert.equal(result.items[1].isSupported, false);
+  for (const { url, options } of calls) {
+    assert.equal(url.pathname, '/platform/v1/rules'); assert.equal(options.method, 'GET');
+    assert.deepEqual([...url.searchParams.keys()], ['page', 'pageSize']); assert.equal(url.searchParams.get('pageSize'), '100');
+  }
+  assert.equal(result.readAllRules, undefined);
+  await assert.rejects(adapter.listRules({ sourceId: SOURCE }), { code: 'INVALID_INPUT' });
+  assert.equal(calls.length, 2);
+});
+
+test('failed, incomplete or unstable rule inventory never becomes an empty retirement result', async t => {
+  for (const status of [401, 403, 404, 429, 500]) await t.test(`http ${status}`, async () => {
+    const adapter = client(async () => errorResponse(status === 404 ? 'RESOURCE_NOT_FOUND' : 'ACCESS_DENIED', status));
+    await assert.rejects(adapter.listRules(), error => error instanceof SequenceError && error.status === status);
+  });
+  for (const [name, respond, code] of [
+    ['repeated ID', (number) => page([ruleSummary(ID(700))], number, number === 1), 'PAGINATION_UNSTABLE'],
+    ['empty unfinished page', () => page([], 1, true), 'INVALID_RESPONSE'],
+    ['unknown status', () => page([ruleSummary(ID(700), { status: 'UNKNOWN' })], 1, false), 'INVALID_RESPONSE'],
+    ['missing deletion field', () => page([ruleSummary(ID(700), { deletedAt: undefined })], 1, false), 'INVALID_RESPONSE'],
+    ['future deletion', () => page([ruleSummary(ID(700), { deletedAt: '2031-01-01T00:00:00Z' })], 1, false), 'INVALID_RESPONSE'],
+  ]) await t.test(name, async () => {
+    let count = 0; const adapter = client(async () => json(respond(++count)));
+    await assert.rejects(adapter.listRules(), { code });
+  });
+});
+
 function hasCode(code, uncertain) {
   return (error) => error instanceof SequenceError && error.code === code &&
     (uncertain === undefined || error.uncertain === uncertain);

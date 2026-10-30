@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ConfigError, loadConfig, summarizeConfig } from '../lib/config.mjs';
+import { ConfigError, loadConfig, summarizeConfig, validateMonthlySequenceRetirement } from '../lib/config.mjs';
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const accounts = { income: id(1), pod: id(2), general: id(3), bills: id(4) };
@@ -14,6 +14,8 @@ const environment = (overrides = {}) => ({
   EMERGENCY_EXCESS_RULE_ID: id(14), ...overrides,
 });
 const rejects = (fn, code) => assert.throws(fn, error => error instanceof ConfigError && error.code === code);
+const retirement = () => ({ schemaVersion: 1, authorizedAt: '2029-12-31T15:00:00.000Z',
+  reference: 'Private reviewed cleanup authorization', podAccountId: accounts.pod, rules: { ...rules, excess: id(14) } });
 
 test('monthly priority adds distinct account roles while retaining four-field legacy mappings', () => {
   const config = loadConfig(environment());
@@ -119,4 +121,34 @@ test('authenticated config summary exposes priorities but no account IDs, rule I
   assert.equal(summary.monthly.windfallUse, 'annual_close');
   for (const secret of [...Object.values(accounts), ...Object.values(rules), id(5), id(6), id(7), id(14), id(30),
     input.RESEND_API_KEY, input.ALERTS_EMAIL_TO, input.ALERTS_EMAIL_FROM]) assert.equal(output.includes(secret), false);
+});
+
+test('authorized retirement permits clean operational configuration while preserving exact audit tombstones', () => {
+  const input = environment({ MONTHLY_SEQUENCE_RETIREMENT_JSON: JSON.stringify(retirement()) });
+  const original = loadConfig(input);
+  input.FINANCE_ACCOUNT_IDS_JSON = JSON.stringify({ income: accounts.income, general: accounts.general, bills: accounts.bills });
+  delete input.FINANCE_RULE_IDS_JSON; delete input.EMERGENCY_EXCESS_RULE_ID;
+  const clean = loadConfig(input);
+  assert.deepEqual(clean.accounts, original.accounts); assert.deepEqual(clean.rules, original.rules);
+  assert.deepEqual(Object.keys(clean.rules), ['payout', 'funding', 'legacyGeneral', 'excess']);
+  assert.equal(clean.configHash, original.configHash);
+  assert.deepEqual(validateMonthlySequenceRetirement(clean, Date.parse('2030-01-01T15:00:00Z')), retirement());
+  const summary = summarizeConfig(clean), output = JSON.stringify(summary);
+  assert.equal(summary.monthly.sequenceRetirementAuthorized, true);
+  for (const secret of [retirement().reference, accounts.pod, ...Object.values(retirement().rules)]) assert.equal(output.includes(secret), false);
+});
+
+test('retirement cannot silently change an existing Pod or archived rule mapping', () => {
+  const input = environment({ MONTHLY_SEQUENCE_RETIREMENT_JSON: JSON.stringify(retirement()) });
+  for (const changes of [
+    { FINANCE_ACCOUNT_IDS_JSON: JSON.stringify({ ...accounts, pod: id(90) }) },
+    { FINANCE_RULE_IDS_JSON: JSON.stringify({ ...rules, payout: id(90) }) },
+    { EMERGENCY_EXCESS_RULE_ID: id(90) },
+  ]) rejects(() => loadConfig({ ...input, ...changes }), 'MONTHLY_RETIREMENT_BINDING_MISMATCH');
+  rejects(() => loadConfig({ ...input, MONTHLY_PRIORITY_ENABLED: 'false' }), 'MONTHLY_RETIREMENT_REQUIRES_MONTHLY');
+  const future = { ...retirement(), authorizedAt: '2031-01-01T15:00:00Z' };
+  rejects(() => validateMonthlySequenceRetirement(loadConfig({ ...input, MONTHLY_SEQUENCE_RETIREMENT_JSON: JSON.stringify(future) }),
+    Date.parse('2030-01-01T15:00:00Z')), 'MONTHLY_RETIREMENT_TIME_INVALID');
+  rejects(() => loadConfig({ ...input, MONTHLY_SEQUENCE_RETIREMENT_JSON: JSON.stringify({ ...retirement(), schemaVersion: 2 }) }), 'MONTHLY_RETIREMENT_INVALID');
+  rejects(() => loadConfig({ ...input, MONTHLY_SEQUENCE_RETIREMENT_JSON: JSON.stringify({ ...retirement(), reference: '' }) }), 'MONTHLY_RETIREMENT_INVALID');
 });
