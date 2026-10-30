@@ -16,7 +16,10 @@ const secret = 'synthetic-webhook-secret-for-offline-tests';
 const cron = 'synthetic-cron-secret-for-offline-tests';
 
 function setup(overrides = {}) {
-  const env = { ...fixtureEnv, SEQUENCE_API_KEY: 'synthetic-provider-key', BLOB_READ_WRITE_TOKEN: 'synthetic-blob-token', CRON_SECRET: cron, SEQUENCE_WEBHOOK_SECRET: secret,
+  // Preserve legacy-route regression coverage independently of the current
+  // example's monthly defaults; monthly-app tests exercise the new workflow.
+  const env = { ...fixtureEnv, MONTHLY_PRIORITY_ENABLED: 'false', ROTH_ENABLED: 'false', GENERAL_SPENDING_MONTHLY_BUDGET: '1000',
+    SEQUENCE_API_KEY: 'synthetic-provider-key', BLOB_READ_WRITE_TOKEN: 'synthetic-blob-token', CRON_SECRET: cron, SEQUENCE_WEBHOOK_SECRET: secret,
     GLOBAL_CONFIG: 'synthetic-private-policy-connection', ...overrides };
   const policy = policyFixture();
   const rothSource = { roth_policy: rothEnvelopeFixture() };

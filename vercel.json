@@ -14,6 +14,8 @@
     { "source": "/api/plan", "destination": "/api/index?route=plan" },
     { "source": "/api/bills", "destination": "/api/index?route=bills" },
     { "source": "/api/roth", "destination": "/api/index?route=roth" },
+    { "source": "/api/monthly", "destination": "/api/index?route=monthly" },
+    { "source": "/api/alerts", "destination": "/api/index?route=alerts" },
     { "source": "/api/reconcile", "destination": "/api/index?route=reconcile" },
     { "source": "/api/webhook", "destination": "/api/index?route=webhook" }
   ],

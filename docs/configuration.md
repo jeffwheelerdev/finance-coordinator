@@ -1,181 +1,142 @@
-# Configuration
+# Configuration — v0.6
 
-Use private deployment environment variables for real mappings and execution
-settings. Bills obligations and monitoring metadata live in private Global Config.
-The repository's [example file](../.env.example) contains synthetic UUIDs and
-illustrative amounts. Production credentials must be scoped to Production;
-previews should remain unconfigured or use completely isolated credentials and
-storage.
+Real account bindings, recipients, credentials, and financial policy belong in
+private production settings. The [example file](../.env.example) uses synthetic
+UUIDs and keeps live transfers disabled. Production secrets must not be
+available to previews.
 
-## Required settings
+## Execution and account variables
 
-| Variable | Format and behavior |
+| Variable | Contract |
 | --- | --- |
-| `APP_MODE` | Required: exactly `observe` or `live`. |
-| `LIVE_TRANSFERS_ENABLED` | Exactly `true` or `false`; defaults to `false`. A submission requires this to be `true` **and** `APP_MODE=live`. |
-| `AUTOMATION_START_AT` | Timezone-qualified ISO timestamp. Optional in observation; required for live mode. Choose a deliberate future UTC cutoff for initial activation, then retain it permanently. |
-| `GENERAL_SPENDING_MONTHLY_BUDGET` | Required nonnegative dollar string, with at most two decimals. No built-in budget default. |
-| `GENERAL_SPENDING_RESERVE_MONTHS` | Required positive integer. Multiplies the monthly budget to obtain the balance target. |
-| `GLOBAL_CONFIG` | Private Global Config connection string with read access to `bills_catalog` and `bills_monitor`. Required for current Bills policy; never put it in a URL shared with a user or in source control. |
-| `ROTH_ENABLED` | Exactly `true` or `false`, default `false`. Configures the independent monthly Roth feature; it does not bypass the global transfer gates. |
-| `ROTH_ACCOUNT_ID` | Exact private investment-account UUID, required when Roth is configured. Must differ from every cash account and refund recipient. |
-| `INCOME_RESERVE` | Required nonnegative dollar string. Set an explicit value, including `0` when intended. |
-| `MAX_BALANCE_AGE_HOURS` | Positive number at most `26`; defaults to `26`. Must resolve to whole milliseconds. |
-| `FINANCE_ACCOUNT_IDS_JSON` | JSON object with exactly `income`, `pod`, `general`, and `bills`; four distinct provider UUIDs. |
-| `FINANCE_RULE_IDS_JSON` | JSON object with exactly `payout`, `funding`, and `legacyGeneral`; three distinct provider UUIDs. |
-| `FINANCE_CANONICAL_HOST` | Stable production hostname, without scheme or path, such as `your-project.vercel.app`. Required for production reconciliation and webhook processing. |
-| `SEQUENCE_API_KEY` | Existing private Sequence key, with the read access and transfer permissions described in [activation](activation.md). |
-| `BLOB_READ_WRITE_TOKEN` | Token for the single private production ledger store. |
-| `CRON_SECRET` | Private random bearer secret of at least 16 characters, used by the cron and administrator endpoints. |
+| `APP_MODE` | Exactly `observe` or `live`. |
+| `LIVE_TRANSFERS_ENABLED` | Exactly `true` or `false`; defaults to `false`. Financial submission also requires `APP_MODE=live`. |
+| `MONTHLY_PRIORITY_ENABLED` | Exactly `true` or `false`; defaults to `false` for legacy compatibility. Set `true` for the current monthly policy. This is not an activation flag. |
+| `AUTOMATION_START_AT` | Prospective timezone-qualified ISO cutoff; required in live mode. Preserve the recorded value after activation. |
+| `FINANCE_ACCOUNT_IDS_JSON` | Exactly the four legacy keys `income`, `pod`, `general`, `bills`, with distinct provider UUIDs. The Pod mapping remains for identity/migration checks and is excluded from monthly routing. |
+| `FINANCE_RULE_IDS_JSON` | Exactly `payout`, `funding`, `legacyGeneral`, with distinct UUIDs. All must be disabled in monthly mode. |
+| `EMERGENCY_ACCOUNT_ID` | Exact Emergency cash-account UUID; required in monthly mode. Adds the internal `accounts.emergency` role. |
+| `PROJECT_ACCOUNT_ID` | Exact Project cash-account UUID; required in monthly mode. |
+| `PERSONAL_INVESTMENT_ACCOUNT_ID` | Exact Personal Investment destination UUID; required in monthly mode. Must be an investment account capable of receiving funds. |
+| `EMERGENCY_EXCESS_RULE_ID` | Exact fourth legacy excess-return rule UUID; required in monthly mode and must also be disabled. Adds the internal `rules.excess` role. |
+| `ROTH_ENABLED` | Configures Roth. Monthly priority mode requires `true`; it does not establish annual personal eligibility. |
+| `ROTH_ACCOUNT_ID` | Exact privately attested Roth investment destination UUID. |
+| `GENERAL_SPENDING_MONTHLY_BUDGET` | Arbitrary nonnegative dollar string, at most two decimal places. |
+| `GENERAL_SPENDING_RESERVE_MONTHS` | Positive integer; the General target is budget multiplied by months. |
+| `EMERGENCY_FUND_TARGET` | Dollar target; defaults to `10000`. |
+| `INCOME_RESERVE` | Explicit nonnegative dollar reserve, including `0` when intended. Deducted once from the regular pool. |
+| `MAX_BALANCE_AGE_HOURS` | Positive value no greater than `26`, expressible in whole milliseconds; defaults to `26`. |
+| `FINANCE_ALLOCATIONS_JSON` | Keep `[]` for the current fixed monthly order. Legacy extra recipients are rejected in monthly mode. |
 
-`SEQUENCE_WEBHOOK_SECRET` is optional. Set it only to the signing secret issued
-for the actual registered endpoint. Its presence alone does not establish that
-webhook delivery is configured or can reach the deployment.
+Every monthly role, including the excluded Pod, must have a distinct account
+identity. Rule identities must also be distinct. Monthly mode currently fixes
+7.5% Emergency, 5% Project, the 15:00 UTC first-day window, and December as the
+annual windfall-close month. These are reviewed policy choices, not undocumented
+environment variables.
 
-Money is parsed into exact integer cents. Signs, exponents, whitespace,
-non-numeric values, and more than two decimal places are rejected. Amounts,
-products, and reserve calculations must fit JavaScript's safe integer range.
-Zero is permitted for a budget or reserve; reserve months must remain positive.
+Money is represented internally as exact integer cents. Invalid numeric
+formats, fractional cents, and unsafe arithmetic are rejected.
 
-## Dynamic Bills target
+## Connections and alerts
 
-Version 0.4.0 always includes Bills at priority zero. It calculates the Bills
-target from the private catalog on each invocation; no environment amount sets
-that target. The old `BILLS_BUFFER_TARGET` variable is obsolete and ignored,
-including on deployments where its old value still exists. Remove it when
-updating deployment settings to avoid confusion.
-
-Global Config must supply these two items together:
-
-| Item | Role |
+| Variable | Purpose |
 | --- | --- |
-| `bills_catalog` | Validated obligations, stable bill IDs, positive cent amounts, recurrence, dated evidence and confirmed cancellation details. |
-| `bills_monitor` | A successful `chatgpt_finances` review with a matching catalog revision and a check time no older than seven days. |
+| `FINANCE_CANONICAL_HOST` | Stable production hostname without scheme or path. Reconciliation and webhook writes reject a different deployment host. |
+| `SEQUENCE_API_KEY` | Private scoped key for the required account/history reads and exact authorized transfer pairs. |
+| `BLOB_READ_WRITE_TOKEN` | Access to the one private execution ledger. |
+| `GLOBAL_CONFIG` | Private read connection for `bills_catalog`, `bills_monitor`, `roth_policy`, and `monthly_policy`. |
+| `CRON_SECRET` | Private bearer secret, at least 16 characters, for cron/admin routes. |
+| `SEQUENCE_WEBHOOK_SECRET` | Optional signing secret issued for the actual registered webhook endpoint. Presence is not proof of registration or delivery. |
+| `RESEND_API_KEY` | Private email-provider credential. Required before monthly financial activation. |
+| `ALERTS_EMAIL_TO` | One resolved private alert recipient. Never commit the production address. |
+| `ALERTS_EMAIL_FROM` | A provider-permitted sender address, optionally with the supported display-name format. |
 
-The application uses an origin-consistent `getAll` read with caching and stale
-fallback disabled. Missing, malformed, mismatched, unavailable or stale data
-blocks new financial submissions. It does not fall back to a fixed target, an
-old environment value or a cached catalog. A known accepted transfer can still
-be observed by its saved provider ID; that exception cannot submit or retry an
-unknown request.
+The email integration is not connected merely because recipient settings exist.
+A valid provider key, sender permission, and separately authorized delivery
+verification are still needed. Resend's `onboarding@resend.dev` sender is
+restricted to the email associated with that Resend account; other recipients
+require an appropriate verified domain. See the
+[provider restriction](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain).
 
-The forecast uses current catalog rates for all twelve months of the current
-`America/New_York` year, then computes
-`ceil(highestMonthCents / 50000) × 50000`. An exact $500 boundary stays unchanged.
-Annual bills occupy their renewal months; an unknown annual date is placed
-conservatively into the highest month. Confirmed future cancellations remain
-included until their local effective date. Uncertain obligations remain
-included with warnings. An empty or fully excluded catalog requires review
-instead of creating a zero target.
+## Private policy records
 
-Catalog updates need no redeployment. The runtime carries the catalog revision,
-hash, forecast year and effective local date into policy and ledger metadata.
-It rejects older catalog versions and older projection dates. A cancellation
-may legitimately change the forecast on a later effective date without a
-catalog rewrite. See [Bills monitoring](bills-monitor.md) for the complete
-catalog, monitor and update contract.
+| Global Config key | Responsibility |
+| --- | --- |
+| `bills_catalog` | Recorded active bills, amounts, recurrences, renewals, and dated evidence. |
+| `bills_monitor` | A successful matching Finances review no older than seven days. |
+| `roth_policy` | Strict statutory/personal tax-year policy plus current-year contribution-route evidence. |
+| `monthly_policy` | Verified opening Income partition and reviewed receipt classifications. |
 
-The fixed private Blob object `finance-v3/ledger.json` remains separate from
-Global Config. The latter is not an execution lease or a substitute for
-conditional ledger writes.
+Reads use origin consistency and no stale-on-error fallback. Private policy
+does not replace the conditional Blob ledger or its execution lease. The
+ledger remains at the established private location; do not change it to bypass
+an error or reset financial history.
 
-## Roth policy
+The Bills target remains
+`ceil(highestProjectedMonthCents / 50000) × 50000`. Annual obligations stay in
+their renewal month. The obsolete `BILLS_BUFFER_TARGET` variable is ignored.
+See [Bills monitoring](bills-monitor.md).
 
-Roth is deliberately absent from `FINANCE_ALLOCATIONS_JSON`: it has an annual
-contribution allowance, not a market-balance target. The additional private
-Global Config item `roth_policy` is an envelope:
+The `roth_policy` envelope retains `schemaVersion`, `policy`, and `evidence`.
+The v0.6 monthly branch uses its current-year route attestation and statutory/
+personal records. The old upstream native-funding pin is retained for legacy
+compatibility and is not an instruction to enable a rule. See
+[Roth policy](roth-policy.md) and [limit monitoring](roth-monitor.md).
+
+A deliberately inactive monthly-policy seed is:
 
 ```json
 {
   "schemaVersion": 1,
-  "policy": "See the Roth policy schema; this field is an object",
-  "evidence": "See the route and upstream proof schema; this field is an object"
+  "id": "monthly-priority",
+  "updatedAt": "2030-01-01T00:00:00.000Z",
+  "opening": { "status": "unverified" },
+  "classification": { "rules": [], "overrides": [] }
 }
 ```
 
-The string values above are documentation placeholders, not valid runtime
-configuration. [Roth policy](roth-policy.md) describes the required monetary
-records. [Roth monitoring](roth-monitor.md) describes the separate evidence
-envelope and safe update process. The same private read connection supplies
-this key. Invalid or unavailable Roth data is reported separately and does not
-disable the established Bills and General policy.
+The timestamp is synthetic and must be replaced with the actual revision time.
+A verified opening record contains `asOf`, `incomeBalanceCents`,
+`regularCents`, `windfallCents`, `unknownCents`, and a private evidence
+`reference`; the three pools must sum to the bank balance. For the opening
+snapshot, `unknownCents` must be zero: classify its entire existing balance
+before fixing that immutable baseline. Later unclassified receipts can be held
+and resolved with exact transaction overrides.
 
-Keep Roth's source/destination and policy ID permanent after live registration.
-An annual-limit edit must not change account identity, activation, the ledger,
-or an already submitted request. Status reports aggregate contribution amounts
-and blockers without exposing provider identifiers or evidence references.
+Classification rules use reviewed exact description/merchant criteria and
+amount bounds. Exact transaction overrides can partition a receipt between
+regular and windfall cents. Keep classification evidence private. Do not seed
+a broad DFAS/payroll rule from the merchant name or inferred pay cadence.
+A `navy-pay` rule additionally requires `excludesBonuses: true`, backed by
+reviewed evidence that the signature distinguishes ordinary pay. A generic
+DFAS description shared with bonuses does not establish that fact; use a
+transaction-specific, documented split when the bank metadata is ambiguous.
+Unclassified receipts are held. The opening record defaults to unverified
+rather than assuming the entire bank balance is regular cash.
 
-## Change a budget
+## Change a budget or extend the design
 
-For example, these synthetic values produce a target of $3,703.68:
+For example:
 
 ```dotenv
 GENERAL_SPENDING_MONTHLY_BUDGET=1234.56
 GENERAL_SPENDING_RESERVE_MONTHS=3
 ```
 
-Edit the private values for the production environment, then create and verify
-a new deployment using the same production host and ledger. Vercel applies
-environment changes to new deployments, so an environment edit alone does not
-change a running deployment. See [Vercel environment variables](https://vercel.com/docs/environment-variables/managing-environment-variables).
+This produces a $3,703.68 target. Apply a private environment edit through a new
+verified deployment. Vercel environment changes apply to new deployments;
+see [Vercel environment variables](https://vercel.com/docs/environment-variables/managing-environment-variables).
 
-The next eligible allocation that has not submitted a request uses the updated
-target. Completed events are never replayed. A lower target causes no reverse
-transfer. An existing uncertain request retains its exact body and key; a new
-budget cannot silently rewrite it, and a smaller safe amount may require
-review. A zero budget creates no dollar gap while keeping the recipient's
-identity intact.
+A future eligible cycle uses its validated policy. An already stored cycle
+retains its frozen plan, percentage basis, and request identities. Changing a
+budget does not generate another monthly opportunity or withdraw a lower
+destination target automatically.
 
-Do not change `AUTOMATION_START_AT`, account/rule bindings, or the ledger
-location as part of a budget edit. The protected status endpoint exposes the
-effective budget and configuration hash without revealing account UUIDs.
+The earlier `FINANCE_ALLOCATIONS_JSON` extension mechanism belongs to the legacy
+refund branch. Adding a recipient to v0.6 needs a reviewed monthly priority,
+account role, funding formula, reservation rule, and exact allowed transfer
+pair. It cannot be achieved by assigning an arbitrary legacy rank.
 
-## Additional accounts
-
-`FINANCE_ALLOCATIONS_JSON` is optional and defaults to `[]`. It accepts up to
-nine additional recipients, for eleven total including Bills and General Spending. This is
-an illustrative entry, not a real account mapping:
-
-```json
-[
-  {
-    "id": "travel",
-    "destinationAccountId": "88888888-8888-4888-8888-888888888888",
-    "monthlyBudget": "250.00",
-    "reserveMonths": 2,
-    "priority": 1,
-    "enabled": true,
-    "startsAt": "2099-01-01T00:00:00Z"
-  }
-]
-```
-
-Replace the illustrative date with the intended future start, or omit
-`startsAt` to use the recipient's prospective registration time. This field
-can also be `null`. The `enabled` field is optional and defaults to `true`;
-all other displayed fields except `startsAt` are required. Unknown fields are
-rejected.
-
-Use a stable lowercase ID beginning with a letter and containing only letters,
-digits, underscores, or hyphens. IDs and destinations must be unique, including
-disabled entries. A destination cannot be Income, the Pod, Bills, or another
-recipient. Additional configured priorities are integers of at least one.
-For compatibility with existing configuration, the runtime adds one to each
-additional priority: configured `1` becomes effective priority `2`. Bills is
-permanently priority `0` and General Spending is priority `1`. Equal optional
-priorities sort by stable ID. Optional recipients cannot replace or disable
-the mandatory Bills allocation.
-
-After the first live registration, a stable ID cannot be redirected to a
-different account. New or re-enabled recipients become eligible no earlier
-than registration and their configured start; they do not receive historical
-refund backlog. Changing `startsAt` cannot move eligibility before the ledger's
-recorded floor. Recipients already captured by a claimed event do not gain new
-siblings through a later configuration edit.
-
-An additional account also needs an explicit permitted Income→destination pair
-on the existing Sequence key. Configuration alone does not grant that access.
-All recipients share the Income reserve and Bills protection. Funding an
-optional recipient also requires Bills to have completed its priority step for
-that refund; a partial or unfunded Bills deficit skips lower recipients for
-that cycle.
+Do not alter the activation cutoff, account bindings, policy identity, or
+ledger location during a routine budget change. Those changes require a
+reviewed migration that preserves accepted and uncertain requests.

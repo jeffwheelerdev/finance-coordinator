@@ -1,5 +1,13 @@
 # Annual Roth limit monitoring
 
+**v0.6 execution note:** the monthly coordinator funds Roth fourth in the
+first-day priority cycle and permits eligible partial funding with same-year
+monthly carryforward. It requires the contribution-route attestation below,
+but it does not depend on an enabled native savings rule. All mapped old rules
+must remain disabled. The retained `upstream` field is legacy schema data;
+its old 1st/15th pin is not an activation instruction for monthly mode.
+See [monthly priority policy](monthly-priority.md).
+
 The monthly contribution amount is derived from a verified annual policy. A
 separate scheduled ChatGPT task checks official IRS publications for a newly
 published current or next-year IRA limit. It can add that statutory record to
@@ -53,13 +61,18 @@ Fidelity's official [direct-deposit form](https://www.fidelity.com/bin-public/06
 describes current-year IRA contributions. The Sequence API has no tax-year
 selector; an ACH description cannot create one.
 
-A verified upstream record adds `ruleId`, `definitionHash`, `verifiedAt`, and
+For the legacy v0.5 execution branch only, a verified upstream record adds
+`ruleId`, `definitionHash`, `verifiedAt`, and
 `reference`. Calculate the fingerprint using `nativeRuleFingerprint()` from the
 actual provider rule. It binds the reviewed schedule and step definitions,
 while excluding mutable rule status and display names. The supported schedule
 is the 1st/15th savings rule at 14:00 UTC. Editing its financial actions or timing
 requires a new reviewed pin. An enabled flag alone is not execution evidence:
-the Roth cash guard also reads the actual scheduled run and all commitments.
+the legacy Roth cash guard also reads the actual scheduled run and all
+commitments. The v0.6 monthly guard instead verifies that every mapped legacy
+rule is disabled and accounts for the monthly coordinator's own reservations.
+The existing upstream field must remain schema-valid, but may be unverified
+when only the current monthly execution branch is used.
 
 The annual limit monitor may modify only the envelope's monetary-policy
 statutory records and create unverified annual placeholders. Route and upstream

@@ -1,198 +1,152 @@
-# Deployment and deliberate activation
+# Staged setup, activation, and operation — v0.6
 
-Version 0.5.0 is configured for inactive operation. These steps describe the
-operating requirements; they are not a record that deployment, webhook
-registration, or financial activation has occurred. Verification uses offline
-tests and provider reads. Do not make a live transfer to test this setup.
+The repository and its tests prepare the monthly coordinator. They do not
+activate financial automation, exercise a real transfer, or prove a real email
+was delivered. Keep `APP_MODE=observe` and `LIVE_TRANSFERS_ENABLED=false`
+through setup and review.
 
-## 1. Establish one inactive production instance
+## 1. Prepare the inactive deployment
 
-Install and run the offline suites with Node.js 22 or 24 and Python 3.12:
+Use one production project, stable canonical host, and the established private
+Blob ledger. Scope real credentials to Production. Preview and historical
+deployment URLs must not share financial write authority.
 
-```bash
-npm ci --ignore-scripts
-npm test
-python3 scripts/test_archives.py
-```
+Set `MONTHLY_PRIORITY_ENABLED=true` with the exact private account mappings.
+Retain the four-account and three-rule JSON shapes; add the separate Emergency,
+Project, Personal Investment, and Emergency excess-rule variables documented in
+[configuration](configuration.md). Every mapped old Sequence rule must be
+**DISABLED**, including native Income allocation, Pod payout, legacy General
+top-up, and the old Emergency excess rule. The monthly branch must be the only
+coordinator for these allocations.
 
-Configure the real private mappings and explicit financial policy described in
-[configuration](configuration.md). Keep `APP_MODE=observe` and
-`LIVE_TRANSFERS_ENABLED=false`. Use the existing Sequence API key; this design
-does not require a replacement key merely to deploy the code.
+Do not delete the old Pod merely to satisfy this version. Its existence is
+compatible with monthly mode; it is excluded from the new routing. Existing
+funds, pending transfers, or earlier live coordinator history must be reconciled
+rather than silently abandoned.
 
-Connect a private Blob store and retain the fixed `finance-v3/ledger.json`
-location. One production project owns this ledger and its cron. Do not run
-overlapping production projects. Keep all real secrets scoped to Production.
-Preview deployments must stay unconfigured or use isolated storage and
-credentials; never give them the production ledger token. Operational routes
-also refuse requests when `VERCEL_ENV=preview`.
+The private Sequence key needs reads for all relevant account roles, transfer
+history, external Income transactions, and the mapped rules. Future live
+authority must be scoped to the exact approved pairs:
 
-Connect a separate private Global Config store through `GLOBAL_CONFIG`. Supply
-the validated `bills_catalog` and matching `bills_monitor` items, then establish
-the monitoring process described in [Bills monitoring](bills-monitor.md).
-The monitor's last successful check must be no older than seven days. The
-runtime reads both items consistently from the origin and does not accept
-stale-on-error fallback. This store supplies policy; it must not replace the
-Blob execution ledger. Catalog updates take effect without deploying code.
-
-The fixed `BILLS_BUFFER_TARGET` setting is obsolete and ignored. The current
-Bills target must come from the annual calendar forecast, rounded up to a $500
-boundary. A deployment without usable current Bills policy cannot submit.
-
-Set `FINANCE_CANONICAL_HOST` to the stable production alias's hostname. Production
-reconciliation and webhooks refuse other hostnames, so an old deployment URL
-cannot submit using its old environment. Authenticated read endpoints on an
-immutable production deployment can still verify that deployment before
-promotion. Review a rollback's policy carefully before moving the stable alias.
-
-## 2. Verify rules, permissions, and read evidence
-
-The configured funding and payout rules must be enabled before live operation.
-The legacy manual General Spending top-up rule must remain disabled to avoid
-duplicate independent execution. The coordinator checks rule state; it does
-not edit these rules or their financial policy.
-
-No additional native Sequence top-up rule is required for Bills or General
-Spending. The coordinator submits exact transfers after the same verified Pod
-refund. Do not activate upstream rules as part of an inactive deployment check.
-
-Roth also uses the coordinator, not a separate native fixed-dollar rule. Set
-its private account binding and annual policy, verify the current-year Fidelity
-deposit route, and pin the reviewed savings-rule definition. Confirm the
-current tax year's personal Roth/combined IRA allowance, regular contributions
-made outside this coordinator, age-based catch-up eligibility, and absence of
-another recurring contribution schedule. The existing account balance cannot
-replace those records. A new calendar year needs its own verified annual facts.
-
-Review the existing key's exact `MANUAL_TRANSFER` permission for
-both Income→Bills and Income→General Spending, their amount caps if present,
-the separately configured Income→Roth pair, and each future recipient pair. A cap must accommodate the intended request or the provider will reject
-it. Unattended operation requires the permission's approval requirement to be
-disabled. A read-only preflight cannot introspect and certify these settings.
-If approval is required, an accepted transfer waits for approval; the
-coordinator does not submit a second request. See the official
-[Sequence API reference](https://api.getsequence.io/platform/).
-
-Administrator routes require `Authorization: Bearer <CRON_SECRET>`. Supply the
-secret privately; do not place it in URLs, screenshots, or committed commands.
-
-| Route | Verification or operation |
+| Source | Destinations |
 | --- | --- |
-| `GET /api/health` | Public basic configuration and mode status. |
-| `GET /api/status` | Effective private policy summary, latest run, and unresolved-state indicators. |
-| `GET /api/bills` | Aggregate twelve-month Bills forecast, dynamic cap and monitor metadata; no private bill rows. |
-| `GET /api/roth` | Private aggregate annual/monthly contribution plan, reserved and settled amounts, and unresolved eligibility requirements. |
-| `GET /api/preflight` | Read-only rule, account, upstream-history, and ledger checks. No provider or ledger writes. |
-| `GET /api/plan` | Read-only evidence and funding plan; does not claim or consume an event. |
-| `GET` or bodyless `POST /api/reconcile` | Operational reconciliation; may update the ledger and submit a transfer when live. |
-| `POST /api/webhook` | Signed Sequence notification; durable receipt can wake operational reconciliation. |
+| Income | Bills, General, Emergency, Roth, Project, Personal Investment |
+| Emergency | Income only |
 
-Passing read checks does not prove write permission or establish that funds
-are currently eligible. A future activation cutoff is reported as not started;
-its upstream window is checked once that window exists.
-Public health checks report configuration booleans; they do not prove fresh
-catalog evidence, complete bill coverage, current bank balances or transfer scope.
+Check any per-transfer amount cap and human-approval requirement through the
+provider's supported controls. A successful account read does not prove transfer
+permission. Do not send a real or simulated transfer merely to test access.
 
-`npm run preflight`, and the production build's preflight, force observation
-and disable financial POSTs even if the configured live gates are on. They
-read Sequence and exercise conditional ledger writes, so they are not purely
-read-only storage checks. They may observe an existing transfer and record run
-metadata. Use the authenticated HTTP preflight for an entirely read-only check.
-Build failures must be understood before promotion; they are not a reason to
-clear the ledger.
+## 2. Verify private policy
 
-## 3. Activate prospectively
+The private Global Config source must contain the Bills catalog and fresh
+monitor record, Roth policy/route envelope, and monthly income policy. An
+unverified opening partition is an expected staging blocker.
 
-After the inactive deployment and evidence are reviewed, choose a deliberate
-future UTC `AUTOMATION_START_AT`. Leave enough time to complete deployment and
-verify the effective settings before that instant. Then configure both
-`APP_MODE=live` and `LIVE_TRANSFERS_ENABLED=true` for the intended production
-deployment and redeploy. Vercel environment edits take effect through new
-deployments, as described in its [environment documentation](https://vercel.com/docs/environment-variables/managing-environment-variables).
+Verify the opening Income balance and its regular/windfall partition against
+a dated bank snapshot. The verified opening record requires `unknownCents=0`;
+fully classify its existing cash before fixing that baseline. Narrow receipt rules and exact
+overrides require supporting evidence; a DFAS/payroll label alone does not
+establish bonus-free pay. Retain unknown receipts as held cash.
 
-The timestamp is a lower bound, not an appointment to move money. No submission
-is eligible before it. Thereafter an actual new Pod refund, completed payout,
-upstream checks, available cash, and suitable post-settlement snapshots must
-all qualify. Bills receives the first eligible transfer while preserving the
-explicit Income reserve; its deficit is not reserved a second time. General
-Spending waits for Bills completion and post-settlement balances. A partial or
-unfunded Bills attempt skips lower recipients for that refund cycle.
-A payout without a refund does not trigger funding. A partial fill uses that
-event once; normal spending does not cause continuous replenishment.
+Verify personal annual IRA facts separately from the published IRS cap:
+eligibility, applicable combined and Roth ceilings, outside contributions,
+other schedules, and ownership of future automated contributions. Preserve the
+current-year ACH route proof. New annual IRS data does not prove these personal
+facts.
 
-Roth has an independent monthly opportunity. The first eligible slot is a
-first-of-month check at 15:00 UTC on or after the recorded activation cutoff.
-Activation after that month's slot does not authorize historical installments.
-The contribution can proceed after the scheduled native savings commitments
-are fully known, without waiting for the routing Pod to empty or refund Income.
-It protects the Bills gap and known pending savings debits. Cash shortages can
-retry within the same month; they do not increase later monthly installments.
+The ledger must have complete bank-history coverage from its opening/checkpoint.
+A history gap beyond the provider's available window needs a reviewed
+reconciliation. Do not move the opening date or reset the ledger to hide a gap.
 
-Once recorded by live operation, the cutoff and ledger history are permanent.
-Never reset state, change the ledger prefix, or move the cutoff forward to
-remove failures or replay work. Source/rule identity changes require a reviewed
-migration, not a routine environment edit.
-Existing live open events that predate Bills-first policy require reviewed
-migration. Do not add a Bills child retroactively or clear the ledger. An
-inactive ledger without financial events transitions without resetting state.
+## Direct email alerts
 
-## 4. Scheduling and optional webhooks
+Configure `RESEND_API_KEY`, the resolved private `ALERTS_EMAIL_TO`, and a
+permitted `ALERTS_EMAIL_FROM`. Recipient discovery alone does not connect the
+provider. In the staged setup, the provider key is absent and real delivery has
+not been exercised.
 
-The configured cron calls `/api/reconcile` daily at 15:00 UTC. Vercel provides
-the `CRON_SECRET` bearer header. Hobby schedules may run at any point within the
-scheduled hour. Provider settlement and bank-balance refresh can add further
-delay. See [cron authorization](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
-and [cron timing](https://vercel.com/docs/cron-jobs/usage-and-pricing).
+The default Resend test sender `onboarding@resend.dev` can send only to the
+address attached to that Resend account. A different intended recipient needs
+an appropriate verified sender domain. Follow
+[Resend's restriction](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain);
+do not assume the recipient qualifies.
 
-The first-day Roth check occurs at 11:00 a.m. in New York during daylight time
-and 10:00 a.m. during standard time. Its 15:00 UTC window follows the currently
-reviewed native savings rule at 14:00 UTC. Changing that native schedule or its
-actions requires reviewing the pinned evidence before Roth can resume. The
-shared Blob lease serializes coordinator requests; it does not lock native
-Sequence rules. Roth explicitly reserves their known pending commitments.
+A real delivery check is a separately reviewed, authorized email action. Keep
+financial gates off while checking it. Confirm provider acceptance and actual
+receipt separately; neither a configuration flag nor an offline test proves
+inbox delivery.
 
-The separate Bills monitor checks Finances and updates private policy; it does
-not initiate transfers or change activation gates. Its schedule and collector
-contract are documented in [Bills monitoring](bills-monitor.md). Catalog or cap
-changes alone do not create a funding event.
+Alerts are attempted when the coordinator detects a problem. Bank snapshots
+may already be delayed, and the normal check is daily. Resend's
+[idempotency retention](https://resend.com/docs/dashboard/emails/idempotency-keys)
+is 24 hours, so a delivery outcome that remains unknown beyond the reviewed
+retry window requires inspection rather than an automatic new send.
 
-The separate IRS limit monitor checks official publications and can update the
-next year's statutory limits. It never submits contributions, enables rules,
-changes personal evidence, or turns on financial execution. See [Roth monitoring](roth-monitor.md).
+## 3. Review the staged endpoints
 
-Webhooks are optional and are not registered by this repository. Register the
-actual canonical `/api/webhook` endpoint in Sequence and store its issued
-signing secret as `SEQUENCE_WEBHOOK_SECRET`. The receiver validates the raw-body
-signature and timestamp, deduplicates a durable receipt, then re-reads provider
-evidence. Setting the variable alone does not establish successful delivery.
+The public health response intentionally omits credentials and private account
+data. Administrative routes require the private bearer secret.
 
-If deployment protection blocks the provider, configure an approved endpoint
-access mechanism and verify delivery without initiating money movement. See
-[Vercel protection bypass for automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation).
-Do not interpret a configured webhook or cron as instant bank settlement.
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/health` | Public health/build information. |
+| `GET /api/status` | Protected effective configuration and aggregate state. |
+| `GET /api/preflight` | Read-only configuration, account-role, rule, policy, and storage readiness checks. |
+| `GET /api/plan` | Read-only proposed plan; not permission or a reservation. |
+| `GET /api/monthly` | Monthly obligations, held pools, blockers, and aggregate execution state. |
+| `GET /api/roth` | Annual room, monthly obligations, and Roth blockers. |
+| `GET /api/bills` | Current Bills projection and monitoring evidence. |
+| `GET /api/alerts` | Alert configuration and durable acceptance status. |
+| `GET /api/reconcile` | Authenticated scheduled reconciliation; obeys global gates and the monthly write window. |
+| `POST /api/webhook` | Optional signed provider wake-up; not financial evidence by itself. |
 
-## Pause and resolve an exception
+Build/CLI observation can record leases and run metadata without financial POSTs.
+Use the HTTP read endpoints when an entirely read-only storage check is needed.
+Understand every staging blocker before enabling live execution. Offline tests
+use mocked providers and do not replace bank, permission, or email verification.
 
-Pause new submissions by setting `LIVE_TRANSFERS_ENABLED=false` and deploying
-that change to the canonical host. Keep the same ledger, cutoff, and bindings.
-Previously accepted transfers can still settle; the engine continues observing
-their provider identities while paused.
+## 4. Activate prospectively when authorized
 
-The same limited observation is available during a Bills-policy outage when
-the ledger already contains an accepted transfer ID. Missing or stale policy
-cannot authorize a new transfer or retry an uncertain request with no saved
-provider ID. Restore valid catalog and monitoring evidence before resuming
-financial work; do not substitute the old fixed buffer.
+Choose a deliberate future `AUTOMATION_START_AT`, with time to deploy and review
+the effective configuration. Set both `APP_MODE=live` and
+`LIVE_TRANSFERS_ENABLED=true` only for the intended canonical production
+deployment. Apply the new environment through a verified deployment;
+[Vercel environment changes](https://vercel.com/docs/environment-variables/managing-environment-variables)
+do not alter an already built deployment.
 
-For a `waiting` result, inspect the reason: pending transfers, stale balances,
-or missing post-settlement evidence need subsequent reads. For `blocked`,
-`uncertain`, or `review`, inspect protected status and sanitized error codes.
-An unknown outcome retains its exact request and key. It may be retried only
-inside 23 hours with fresh supporting evidence; otherwise it requires explicit
-provider reconciliation. Do not assume every network error will self-heal or
-clear an exception by sending a new transfer.
+The cutoff is a lower bound, not a promise to transfer at that instant.
+Activation after a month's first-day 15:00 UTC slot starts eligibility the next
+month. Preserve the recorded cutoff, account bindings, and ledger permanently.
+Existing live legacy events need a reviewed migration.
 
-There is no automatic ledger-reset or review-override endpoint. Preserve the
-private evidence and reconcile what the provider actually accepted before a
-reviewed state repair. A later successful upstream run does not erase a prior
-failed run's meaning.
+The cron calls reconciliation daily at 15:00 UTC. New monthly requests are
+allowed only on New York's first day from that time onward. Later checks observe
+accepted transfers, update evidence, and report missed work. There is no 15th
+allocation, deposit-triggered refill, or month-end regular sweep.
+
+[Vercel cron timing](https://vercel.com/docs/cron-jobs/usage-and-pricing),
+provider approvals, bank snapshot freshness, and ACH settlement can delay work.
+Missing the allowed day does not authorize a late replacement transfer.
+
+## 5. Operate and recover
+
+Pause new work by disabling the live-transfer gate and deploying that change.
+Accepted transfers can still settle and remain observable. Keep their provider
+IDs, original requests, idempotency keys, and ledger records.
+
+An unknown transfer outcome stops later submissions. Recovery preserves the
+exact request/key, remains within 23 hours of the first attempt, and must still
+fit the same first-day window. Outside those limits, inspect provider evidence
+before a reviewed repair. Never erase a ledger entry or send a replacement
+with a new key merely to clear an error.
+
+Roth shortfalls remain dated same-year obligations for later monthly cycles.
+Project history feeds the December windfall catch-up. Prior-year windfalls and
+cross-year IRA settlement attribution require review. No January rule silently
+relabels them.
+
+Optional webhooks must be registered with the actual canonical endpoint and
+issued signing secret. The receiver verifies signatures, records a receipt,
+and rereads the provider. Neither webhook registration nor a configured secret
+guarantees delivery, immediate bank data, or settlement.

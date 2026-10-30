@@ -1,20 +1,30 @@
 # Roth contribution policy
 
+**v0.6 monthly priority mode:** Roth is fourth, after Bills, General Spending,
+and Emergency, within the single first-day cycle. Eligible partial funding is
+allowed; unpaid dated obligations carry to later first-day cycles in the same
+tax year. The older full-installment/native-savings behavior belongs only to
+the legacy branch. See [monthly priority policy](monthly-priority.md).
+
 `lib/roth.mjs` validates private, tax-year-specific policy and calculates a
 monthly cash contribution. It does not select or purchase investments, infer
 contributions from an account balance, or certify the custodian's transfer
 classification. The executor separately verifies the destination, contribution
-route, upstream cash commitments, current balances and activation gates.
+route, current cash commitments, balances, and activation gates. The monthly
+executor uses this fiscal policy together with its dated obligation ledger.
 
 ## Monthly schedule
 
 The policy uses `America/New_York` to identify the current calendar month and
-tax year. Each month's slot is due on the first at **15:00 UTC**, after the
-configured native funding time. This is 10 a.m. Eastern Standard Time or
+tax year. Each month's slot is due on the first at **15:00 UTC**. This is
+10 a.m. Eastern Standard Time or
 11 a.m. Eastern Daylight Time. A slot cannot execute before its due time or
 before the configured activation cutoff. A due time before activation is
 excluded; activation does not recover earlier months or increase the scheduled
-installment. The executor permits at most one immutable intent for each month.
+installment. In v0.6 all new requests remain inside the first local day; a later
+daily check does not authorize a late transfer. A monthly cycle freezes one Roth
+request, which can fund several eligible dated obligations and records their
+individual attribution.
 
 For a verified annual Roth allowance `A`, in integer cents, installment `m` is:
 
@@ -105,11 +115,21 @@ Combined room = personal combined ceiling − outside Traditional − outside Ro
                 − own reserved contributions
 ```
 
-The executable request is at most the current month's installment and that
-remaining room. The executor supplies `ownReservedCents` from immutable
+The pure fiscal forecast bounds the current installment by remaining room.
+The v0.6 planner can combine that target with verified unpaid same-year monthly
+obligations, and can fund a partial amount when cash is short. The aggregate
+request still cannot exceed remaining annual room. The executor supplies
+`ownReservedCents` from immutable
 requests for the same year, including accepted, uncertain and settled requests.
 When rechecking an uncertain request, it excludes that request itself from the
 aggregate before deciding whether its unchanged amount still fits.
+
+Ordinary monthly Roth shortfalls are retained for later 1st-of-month cycles in
+the same year. Project and Personal Investment cannot consume cash ahead of an
+unpaid or unverified Roth obligation. In December's annual-close cycle, held
+current-year windfalls can help fund those obligations before Project catch-up
+and Personal Investment. A prior-year shortfall is never automatically replayed
+as a current-year ACH contribution.
 
 For a **synthetic example**, suppose the published/compensation ceiling is
 $8,000, a verified income restriction reduces the direct Roth ceiling to

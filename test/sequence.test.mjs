@@ -29,6 +29,12 @@ function transfer(overrides = {}) {
   };
 }
 
+function externalTransaction(overrides = {}) {
+  return { id: ID(30), accountId: SOURCE, amountInCents: 12345, direction: 'MONEY_IN', status: 'COMPLETE',
+    description: 'Synthetic deposit', merchantName: null, category: 'Income',
+    transactionDate: '2030-01-01T12:00:00.000Z', ...overrides };
+}
+
 function intent(overrides = {}) {
   return {
     idempotencyKey: KEY,
@@ -178,7 +184,7 @@ test('external transactions preserve complete window metadata', async () => {
     const params = new URL(url).searchParams;
     assert.equal(params.get('executionMode'), null);
     assert.equal(params.get('direction'), 'MONEY_IN');
-    return json(page([{ id: ID(30 + calls), accountId: SOURCE, status: 'COMPLETE' }], calls, calls === 1, { window }));
+    return json(page([externalTransaction({ id: ID(30 + calls) })], calls, calls === 1, { window }));
   });
   const result = await api.listExternalTransactions({ accountIds: [SOURCE], from: window.from,
     to: window.to, direction: 'MONEY_IN', status: 'COMPLETE' });
@@ -195,6 +201,67 @@ test('external date-window truncation or missing metadata cannot masquerade as c
     .listExternalTransactions({ accountIds: [SOURCE] }), hasCode('INVALID_RESPONSE'));
   await assert.rejects(client(async () => json(page([], 1, false, { window: { ...window, truncated: false } })))
     .listExternalTransactions({ accountIds: [SOURCE], from: '2029-12-31T00:00:00.000Z' }), hasCode('INVALID_RESPONSE'));
+});
+
+test('external transactions must belong to the frozen requested accounts, filters and date window', async t => {
+  const window = { from: '2030-01-01T00:00:00.000Z', to: new Date(NOW).toISOString(), truncated: false };
+  for (const change of [
+    { accountId: ID(99) }, { accountId: 'invalid' }, { direction: 'MONEY_OUT' }, { status: 'PENDING' },
+    { transactionDate: '2029-12-31T23:59:59.000Z' }, { transactionDate: '2030-01-02T12:00:00.001Z' },
+    { transactionDate: '2030-02-31T00:00:00.000Z' }, { transactionDate: '2030-01-01' },
+    { amountInCents: -1 }, { amountInCents: 1.5 }, { amountInCents: Number.MAX_SAFE_INTEGER + 1 },
+    { description: undefined }, { merchantName: [] }, { category: {} },
+  ]) await t.test(JSON.stringify(change), async () => {
+    const api = client(async () => json(page([externalTransaction(change)], 1, false, { window })));
+    await assert.rejects(api.listExternalTransactions({ accountIds: [SOURCE], from: window.from,
+      to: window.to, direction: 'MONEY_IN', status: 'COMPLETE' }), hasCode('INVALID_RESPONSE'));
+  });
+});
+
+test('external history preserves explicit null metadata and integer-zero rows without classifying income', async () => {
+  const window = { from: '2030-01-01T00:00:00.000Z', to: new Date(NOW).toISOString(), truncated: false };
+  const item = externalTransaction({ amountInCents: 0, description: null, merchantName: null, category: null });
+  const api = client(async () => json(page([item], 1, false, { window })));
+  assert.deepEqual((await api.listExternalTransactions({ accountIds: [SOURCE], from: window.from })).items, [item]);
+});
+
+test('external pagination rejects repeated or changed identities and reversed ordering', async t => {
+  const window = { from: '2030-01-01T00:00:00.000Z', to: new Date(NOW).toISOString(), truncated: false };
+  for (const [name, second, code] of [
+    ['repeated', externalTransaction(), 'PAGINATION_UNSTABLE'],
+    ['changed amount', externalTransaction({ amountInCents: 54321 }), 'PAGINATION_UNSTABLE'],
+    ['newer later page', externalTransaction({ id: ID(31), transactionDate: '2030-01-02T00:00:00.000Z' }), 'INVALID_RESPONSE'],
+  ]) await t.test(name, async () => {
+    let calls = 0;
+    const api = client(async () => json(page([++calls === 1 ? externalTransaction() : second], calls, calls === 1, { window })));
+    await assert.rejects(api.listExternalTransactions({ accountIds: [SOURCE], from: window.from }), hasCode(code));
+  });
+});
+
+test('external request filters and provider bounds cannot change between pages', async t => {
+  const window = { from: '2030-01-01T00:00:00.000Z', to: new Date(NOW).toISOString(), truncated: false };
+  await t.test('frozen caller input', async () => {
+    const options = { accountIds: [SOURCE], from: window.from, to: window.to };
+    let calls = 0;
+    const api = client(async url => {
+      calls += 1;
+      assert.deepEqual(new URL(url).searchParams.getAll('accountIds[]'), [SOURCE]);
+      assert.equal(new URL(url).searchParams.get('from'), window.from);
+      assert.equal(new URL(url).searchParams.get('to'), window.to);
+      options.accountIds.push(DESTINATION); options.from = '2029-01-01T00:00:00.000Z';
+      return json(page([externalTransaction({ id: ID(30 + calls) })], calls, calls === 1, { window }));
+    });
+    assert.equal((await api.listExternalTransactions(options)).items.length, 2);
+  });
+  await t.test('provider narrowing', async () => {
+    let calls = 0;
+    const api = client(async () => {
+      calls += 1;
+      return json(page([externalTransaction({ id: ID(30 + calls) })], calls, calls === 1,
+        { window: { ...window, from: calls === 1 ? window.from : '2030-01-01T01:00:00.000Z' } }));
+    });
+    await assert.rejects(api.listExternalTransactions({ accountIds: [SOURCE], from: window.from }), hasCode('INVALID_RESPONSE'));
+  });
 });
 
 test('invalid list filters do not reach the network', async (t) => {

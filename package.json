@@ -1,9 +1,9 @@
 {
   "name": "finance-coordinator",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Durable cash-account funding and monthly Roth contributions for Sequence, staged for deliberate activation.",
+  "description": "Monthly priority funding, income-source accounting and annual shortfall recovery for Sequence, staged for deliberate activation.",
   "engines": {
     "node": "22.x || 24.x"
   },
